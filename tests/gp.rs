@@ -231,6 +231,29 @@ egg::test_fn! {
     )"
 }
 
+egg::test_fn! {
+    test_3, rules(),
+    "(prob 
+        (objFun (div (var x) (var y))) 
+        (constraints 
+            (and 
+                (le 2.0 (var x))
+                (and 
+                    (le (var x) 3.0) 
+                    (and 
+                        (le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
+                        (eq (mul (var x) (var y)) (var z))))
+            )
+        )
+    )" => 
+    "(prob 
+        (objFun (add (var x) (var y))) 
+        (constraints 
+            (le 0.0 (add (var x) (var y)))
+        )
+    )"
+}
+
 // #[derive(Debug)]
 // pub struct AntiAstSize;
 // impl<L: Language> CostFunction<L> for AntiAstSize {
