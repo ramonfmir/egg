@@ -11,10 +11,11 @@ define_language! {
         "eq" = Eq([Id; 2]),
         "le" = Le([Id; 2]),
 
+        "neg" = Neg(Id),
         "add" = Add([Id; 2]),
         "sub" = Sub([Id; 2]),
         "mul" = Mul([Id; 2]),
-        "mul" = Div([Id; 2]),
+        "div" = Div([Id; 2]),
         "pow" = Pow([Id; 2]),
         "log" = Log(Id),
         "exp" = Exp(Id),
@@ -84,7 +85,15 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
             }
+            Optimization::Sub([a, b]) => {
+                free_vars.extend(get_vars(a));
+                free_vars.extend(get_vars(b));
+            }
             Optimization::Mul([a, b]) => {
+                free_vars.extend(get_vars(a));
+                free_vars.extend(get_vars(b));
+            }
+            Optimization::Div([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
             }
@@ -138,7 +147,7 @@ impl Applier<Optimization, Meta> for MapExp {
         let mut res = vec![];
 
         for (id, sym) in free_vars {
-            let y = egraph.add(Optimization::Symbol("y".into()));
+            let y = egraph.add(Optimization::Symbol(sym));
             let var = egraph.add(Optimization::Var(y));
             let exp = egraph.add(Optimization::Exp(var));
             
@@ -154,16 +163,38 @@ impl Applier<Optimization, Meta> for MapExp {
 }
 
 pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
-    rw!("and-comm"; 
-        "(and ?a ?b)" => "(and ?b ?a)"),
-    rw!("and-assoc";
-        "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
+    rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
+    rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
     
-    rw!("eq-symm";
-        "(eq ?a ?b)" => "(eq ?b ?a)"),
+    rw!("eq-symm"; "(eq ?a ?b)" => "(eq ?b ?a)"),
     
+    rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
+    rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
+    rw!("add-0-right"; "(add ?a 0.0)" => "?a"),
+    rw!("add-0-left"; "(add 0.0 ?a)" => "?a"),
     
+    rw!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+    rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
+    rw!("mul-1-right"; "(mul ?a 1.0)" => "?a"),
+    rw!("mul-1-left"; "(mul 1.0 ?a)" => "?a"),
+    rw!("mul-0-right"; "(mul ?a 0.0)" => "0.0"),
+    rw!("mul-0-left"; "(mul 0.0 ?a)" => "0.0"),
 
+    rw!("sub-0"; "(sub ?a 0.0)" => "?a"),
+
+    rw!("pow-1"; "(pow ?a 1.0)" => "?a"),
+    rw!("pow-0"; "(pow ?a 0.0)" => "1.0"),
+
+    rw!("log-1"; "(log 1.0)" => "0.0"),
+
+    rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
+    rw!("mul-exp"; "(mul (exp ?a) (exp ?b))" => "(exp (add ?a ?b))"),
+
+    rw!("log-exp"; "(log (exp ?a))" => "?a"),
+
+    rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))"),
+
+    rw!("map-objFun-log"; "(objFun ?a)" => "(objFun (log ?a))"),
     rw!("map-domain-exp"; 
         "(prob (objFun ?o) (constraints ?cs))" => { MapExp {} } )
 ]}
@@ -177,9 +208,25 @@ egg::test_fn! {
         )
     )" => 
     "(prob 
-        (objFun (exp (var y))) 
+        (objFun (exp (var x))) 
         (constraints 
-            (le 1.0 (exp (var y)))
+            (le 1.0 (exp (var x)))
+        )
+    )"
+}
+
+egg::test_fn! {
+    test_2, rules(),
+    "(prob 
+        (objFun (mul (var x) (var y))) 
+        (constraints 
+            (le 1.0 (mul (var x) (var y)))
+        )
+    )" => 
+    "(prob 
+        (objFun (add (var x) (var y))) 
+        (constraints 
+            (le 0.0 (add (var x) (var y)))
         )
     )"
 }
