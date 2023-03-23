@@ -11,9 +11,10 @@ define_language! {
         "eq" = Eq([Id; 2]),
         "le" = Le([Id; 2]),
 
-        "neg" = Neg(Id),
         "add" = Add([Id; 2]),
+        "sub" = Sub([Id; 2]),
         "mul" = Mul([Id; 2]),
+        "mul" = Div([Id; 2]),
         "pow" = Pow([Id; 2]),
         "log" = Log(Id),
         "exp" = Exp(Id),
@@ -39,7 +40,8 @@ impl Analysis<Optimization> for Meta {
     type Data = Data;
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> DidMerge {
         let before_len = to.free_vars.len();
-        to.free_vars.extend(&from.free_vars);
+        //to.free_vars.extend(&from.free_vars);
+        to.free_vars.retain(|i| from.free_vars.contains(i));
         DidMerge(
             before_len != to.free_vars.len(),
             to.free_vars.len() != from.free_vars.len(),
@@ -51,8 +53,6 @@ impl Analysis<Optimization> for Meta {
             |i: &Id| egraph[*i].data.free_vars.iter().cloned();
         
         let mut free_vars = HashSet::default();
-        
-        println!("enode: {:?}", enode);
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -111,9 +111,11 @@ impl Analysis<Optimization> for Meta {
             Optimization::Float(_) => {}
         }
 
-        println!("final vars: {:?}", free_vars);
-
         Data { free_vars }
+    }
+
+    fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
+        // Do nothing.
     }
 }
 
@@ -130,20 +132,23 @@ impl Applier<Optimization, Meta> for MapExp {
         searcher_pattern: Option<&PatternAst<Optimization>>, 
         rule_name: Symbol
     ) -> Vec<Id> {
+        //print!("EGraph {:?}", egraph.dump());
         let free_vars : HashSet<(Id, Symbol)> = egraph[matched_id].data.free_vars.clone();
 
         let mut res = vec![];
 
         for (id, sym) in free_vars {
-            let n = egraph.add(Optimization::Symbol(format!("_{}", sym).into()));
-            let var = egraph.add(Optimization::Var(n));
+            let y = egraph.add(Optimization::Symbol("y".into()));
+            let var = egraph.add(Optimization::Var(y));
             let exp = egraph.add(Optimization::Exp(var));
-            // if egraph.union(id, exp) {
-            //     res.push(id);
-            //     println!("exp var: {:?}", exp);
-            // }
+            
+            if let Some((_, parent_id)) = egraph[id].parents().last() {
+                if egraph.union(parent_id, exp) {
+                    res.push(parent_id);
+                }
+            }
         }
-
+        
         return res; 
     }
 }
@@ -151,6 +156,13 @@ impl Applier<Optimization, Meta> for MapExp {
 pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("and-comm"; 
         "(and ?a ?b)" => "(and ?b ?a)"),
+    rw!("and-assoc";
+        "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
+    
+    rw!("eq-symm";
+        "(eq ?a ?b)" => "(eq ?b ?a)"),
+    
+    
 
     rw!("map-domain-exp"; 
         "(prob (objFun ?o) (constraints ?cs))" => { MapExp {} } )
@@ -165,9 +177,50 @@ egg::test_fn! {
         )
     )" => 
     "(prob 
-        (objFun (exp (var _x))) 
+        (objFun (exp (var y))) 
         (constraints 
-            (le 1.0 (exp (var _x)))
+            (le 1.0 (exp (var y)))
         )
     )"
 }
+
+// #[derive(Debug)]
+// pub struct AntiAstSize;
+// impl<L: Language> CostFunction<L> for AntiAstSize {
+//     type Cost = i32;
+//     fn cost<C>(&mut self, enode: &L, mut costs: C) -> Self::Cost
+//     where
+//         C: FnMut(Id) -> Self::Cost,
+//     {
+//         0
+//     }
+// }
+
+// fn simplify(s: &str) -> String {
+//     let expr: RecExpr<Optimization> = s.parse().unwrap();
+
+//     let runner = Runner::default().with_expr(&expr).run(&rules());
+    
+//     let root = runner.roots[0];
+
+//     let extractor = Extractor::new(&runner.egraph, AntiAstSize);
+//     let (best_cost, best) = extractor.find_best(root);
+//     println!("Simplified {} to {} with cost {}", expr, best, best_cost);
+
+//     //print!("{}", runner.egraph);
+
+//     return best.to_string();
+// }
+
+
+// #[test]
+// fn simple_tests() {
+//     let r = simplify("
+//     (prob 
+//         (objFun (var x)) 
+//         (constraints 
+//             (le 1.0 (var x))
+//         )
+//     )");
+//     println!("simplified: {}", r);
+// }
