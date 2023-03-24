@@ -1,5 +1,9 @@
 use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
+use instant::Duration;
+use ordered_float::NotNan;
+
+pub type Constant = NotNan<f64>;
 
 define_language! {
     pub enum Optimization {
@@ -23,7 +27,7 @@ define_language! {
         "var" = Var(Id),
 
         Symbol(Symbol),
-        Float(f64),
+        Constant(Constant),
     }
 }
 
@@ -32,10 +36,10 @@ type EGraph = egg::EGraph<Optimization, Meta>;
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Meta;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
-    constant: Option<f64>,
+    constant: Option<Constant>,
 }
 
 impl Analysis<Optimization> for Meta {    
@@ -54,10 +58,10 @@ impl Analysis<Optimization> for Meta {
         let get_vars = 
             |i: &Id| egraph[*i].data.free_vars.iter().cloned();
         let get_constant = 
-            |i: &Id| egraph[*i].data.constant;
+            |i: &Id| egraph[*i].data.constant.clone();
         
         let mut free_vars = HashSet::default();
-        let mut constant = None;
+        let mut constant: Option<Constant> = None;
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -85,7 +89,9 @@ impl Analysis<Optimization> for Meta {
             Optimization::Neg(a) => {
                 free_vars.extend(get_vars(a));
                 match get_constant(a) {
-                    Some(c) => { constant = Some(-c); }
+                    Some(c) => { 
+                        constant = Some(-c); 
+                    }
                     _ => {}
                 }
             }
@@ -93,7 +99,9 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { constant = Some(c1 + c2); }
+                    (Some(c1), Some(c2)) => { 
+                        constant = Some(c1 + c2); 
+                    }
                     _ => {}
                 }
             }
@@ -101,7 +109,9 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { constant = Some(c1 - c2); }
+                    (Some(c1), Some(c2)) => { 
+                        constant = Some(c1 - c2); 
+                    }
                     _ => {}
                 }
             }
@@ -109,7 +119,9 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { constant = Some(c1 * c2); }
+                    (Some(c1), Some(c2)) => { 
+                        constant = Some(c1 * c2); 
+                    }
                     _ => {}
                 }
             }
@@ -117,7 +129,9 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { constant = Some(c1 / c2); }
+                    (Some(c1), Some(c2)) => { 
+                        constant = Some(c1 / c2); 
+                    }
                     _ => {}
                 }
             }
@@ -125,21 +139,27 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { constant = Some(c1.powf(c2)); }
+                    (Some(c1), Some(c2)) => { 
+                        constant = Some(NotNan::new(c1.powf(c2.into())).unwrap()); 
+                    }
                     _ => {}
                 }
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
                 match  get_constant(a) {
-                    Some(c) => { constant = Some(c.ln()); }
+                    Some(c) => { 
+                        constant = Some(NotNan::new(c.ln()).unwrap()); 
+                    }
                     _ => {}
                 }
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
                 match  get_constant(a) {
-                    Some(c) => { constant = Some(c.exp()); }
+                    Some(c) => { 
+                        constant = Some(NotNan::new(c.exp()).unwrap()); 
+                    }
                     _ => {}
                 }
             }
@@ -153,7 +173,7 @@ impl Analysis<Optimization> for Meta {
                 }
             }
             Optimization::Symbol(_) => {}
-            Optimization::Float(f) => {
+            Optimization::Constant(f) => {
                 constant = Some(*f);
             }
         }
@@ -165,7 +185,8 @@ impl Analysis<Optimization> for Meta {
         // Constant fold.
         let constant = egraph[id].data.constant.clone();
         if let Some(c) = constant {
-            egraph.union(id, egraph.add(Optimization::Float(c)));
+            let const_id = egraph.add(Optimization::Constant(c));
+            egraph.union(id, const_id);
         }
     }
 }
@@ -281,6 +302,8 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
 
     rw!("log-exp"; "(log (exp ?a))" => "?a"),
 
+    rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))"),
+
     rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))"),
 
     rw!("map-objFun-log"; "(objFun ?a)" => "(objFun (log ?a))"),
@@ -321,7 +344,12 @@ egg::test_fn! {
 }
 
 egg::test_fn! {
-    test_3, rules(),
+    test_3, rules(), 
+    runner = 
+        Runner::default()
+        .with_node_limit(1000000)
+        .with_iter_limit(100)
+        .with_time_limit(Duration::from_secs(100)),
     "(prob 
         (objFun (div (var x) (var y))) 
         (constraints 
@@ -331,7 +359,10 @@ egg::test_fn! {
                     (le (var x) 3.0) 
                     (and 
                         (le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
-                        (eq (mul (var x) (var y)) (var z))))
+                        (eq (mul (var x) (var y)) (var z))
+                    )
+                
+                )
             )
         )
     )" => 
@@ -351,6 +382,39 @@ egg::test_fn! {
                             1.0
                         ) 
                         (eq (sub (add (var x) (var y)) (var z)) 0.0)))
+            )
+        )
+    )"
+}
+
+egg::test_fn! {
+    test_4, rules(), 
+    runner = 
+        Runner::default()
+        .with_node_limit(1000000)
+        .with_iter_limit(100)
+        .with_time_limit(Duration::from_secs(100)),
+    "(prob 
+        (objFun (div (var x) (var y))) 
+        (constraints 
+            (and 
+                (le 2.0 (var x))
+                (and 
+                    (le (var x) 3.0)
+                    (eq (mul (var x) (var y)) (var z))
+                )
+            )
+        )
+    )" => 
+    "(prob 
+        (objFun (sub (var x) (var y))) 
+        (constraints 
+            (and 
+                (le (log 2.0) (var x))
+                (and 
+                    (le (var x) (log 3.0)) 
+                    (eq (sub (add (var x) (var y)) (var z)) 0.0)
+                )
             )
         )
     )"
