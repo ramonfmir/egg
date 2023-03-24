@@ -23,7 +23,7 @@ define_language! {
         "var" = Var(Id),
 
         Symbol(Symbol),
-        Float(u64),
+        Float(f64),
     }
 }
 
@@ -35,6 +35,7 @@ pub struct Meta;
 #[derive(Debug)]
 pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
+    constant: Option<f64>,
 }
 
 impl Analysis<Optimization> for Meta {    
@@ -52,8 +53,11 @@ impl Analysis<Optimization> for Meta {
     fn make(egraph: &EGraph, enode: &Optimization) -> Self::Data {
         let get_vars = 
             |i: &Id| egraph[*i].data.free_vars.iter().cloned();
+        let get_constant = 
+            |i: &Id| egraph[*i].data.constant;
         
         let mut free_vars = HashSet::default();
+        let mut constant = None;
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -79,33 +83,65 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(b));
             }
             Optimization::Neg(a) => {
-                free_vars.extend(get_vars(a))
+                free_vars.extend(get_vars(a));
+                match get_constant(a) {
+                    Some(c) => { constant = Some(-c); }
+                    _ => {}
+                }
             }
             Optimization::Add([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                match (get_constant(a), get_constant(b)) {
+                    (Some(c1), Some(c2)) => { constant = Some(c1 + c2); }
+                    _ => {}
+                }
             }
             Optimization::Sub([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                match (get_constant(a), get_constant(b)) {
+                    (Some(c1), Some(c2)) => { constant = Some(c1 - c2); }
+                    _ => {}
+                }
             }
             Optimization::Mul([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                match (get_constant(a), get_constant(b)) {
+                    (Some(c1), Some(c2)) => { constant = Some(c1 * c2); }
+                    _ => {}
+                }
             }
             Optimization::Div([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                match (get_constant(a), get_constant(b)) {
+                    (Some(c1), Some(c2)) => { constant = Some(c1 / c2); }
+                    _ => {}
+                }
             }
             Optimization::Pow([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                match (get_constant(a), get_constant(b)) {
+                    (Some(c1), Some(c2)) => { constant = Some(c1.powf(c2)); }
+                    _ => {}
+                }
             }
             Optimization::Log(a) => {
-                free_vars.extend(get_vars(a))
+                free_vars.extend(get_vars(a));
+                match  get_constant(a) {
+                    Some(c) => { constant = Some(c.ln()); }
+                    _ => {}
+                }
             }
             Optimization::Exp(a) => {
-                free_vars.extend(get_vars(a))
+                free_vars.extend(get_vars(a));
+                match  get_constant(a) {
+                    Some(c) => { constant = Some(c.exp()); }
+                    _ => {}
+                }
             }
             Optimization::Var(a) => {
                 // Assume that after var there is always a symbol.
@@ -117,14 +153,20 @@ impl Analysis<Optimization> for Meta {
                 }
             }
             Optimization::Symbol(_) => {}
-            Optimization::Float(_) => {}
+            Optimization::Float(f) => {
+                constant = Some(*f);
+            }
         }
 
-        Data { free_vars }
+        Data { free_vars, constant }
     }
 
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
-        // Do nothing.
+        // Constant fold.
+        let constant = egraph[id].data.constant.clone();
+        if let Some(c) = constant {
+            egraph.union(id, egraph.add(Optimization::Float(c)));
+        }
     }
 }
 
@@ -151,6 +193,7 @@ impl Applier<Optimization, Meta> for MapExp {
             let var = egraph.add(Optimization::Var(y));
             let exp = egraph.add(Optimization::Exp(var));
             
+            // We make (var x) = (exp (var x)).
             if let Some((_, parent_id)) = egraph[id].parents().last() {
                 if egraph.union(parent_id, exp) {
                     res.push(parent_id);
@@ -167,7 +210,20 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
     
     rw!("eq-symm"; "(eq ?a ?b)" => "(eq ?b ?a)"),
-    
+    rw!("eq-add-sub"; "(eq (add ?a ?b) ?c)" => "(eq ?a (sub ?c ?b))"),
+    rw!("eq-mul-div"; "(eq (mul ?a ?b) ?c)" => "(eq ?a (div ?c ?b))"),
+
+    rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0.0)"),
+    rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1.0)"),
+
+    rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
+    rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
+    rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)"),
+    rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)"),
+
+    rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0.0)"),
+    rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1.0)"),
+
     rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
     rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
     rw!("add-0-right"; "(add ?a 0.0)" => "?a"),
@@ -180,15 +236,48 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("mul-0-right"; "(mul ?a 0.0)" => "0.0"),
     rw!("mul-0-left"; "(mul 0.0 ?a)" => "0.0"),
 
+    rw!("add-sub"; "(add ?a (sub ?b ?c))" => "(sub (add ?a ?b) ?c)"),
+    rw!("sub-add"; "(sub (add ?a ?b) ?c)" => "(add ?a (sub ?b ?c))"),
+
+    rw!("mul-add"; "(mul ?a (add ?b ?c))" => "(add (mul ?a ?b) (mul ?a ?c))"),
+    rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
+
+    rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
+    rw!("sub-mul"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
+
+    rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)"),
+    rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
+
+    rw!("div-1"; "(div ?a 1.0)" => "?a"),
+
+    rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))"),
+    rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
+
+    rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))"),
+    rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
+
     rw!("sub-0"; "(sub ?a 0.0)" => "?a"),
 
     rw!("pow-1"; "(pow ?a 1.0)" => "?a"),
     rw!("pow-0"; "(pow ?a 0.0)" => "1.0"),
 
+    rw!("pow-add"; "(pow ?a (add ?b ?c))" => "(mul (pow ?a ?b) (pow ?a ?c))"),
+    rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
+
+    rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))"),
+    rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
+
+    rw!("exp-0"; "(exp 0.0)" => "1.0"),
+
     rw!("log-1"; "(log 1.0)" => "0.0"),
 
     rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
     rw!("mul-exp"; "(mul (exp ?a) (exp ?b))" => "(exp (add ?a ?b))"),
+
+    rw!("exp-sub"; "(exp (sub ?a ?b))" => "(div (exp ?a) (exp ?b))"),
+    rw!("div-exp"; "(div (exp ?a) (exp ?b))" => "(exp (sub ?a ?b))"),
+
+    rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
 
     rw!("log-exp"; "(log (exp ?a))" => "?a"),
 
@@ -247,9 +336,22 @@ egg::test_fn! {
         )
     )" => 
     "(prob 
-        (objFun (add (var x) (var y))) 
+        (objFun (sub (var x) (var y))) 
         (constraints 
-            (le 0.0 (add (var x) (var y)))
+            (and 
+                (le (log 2.0) (var x))
+                (and 
+                    (le (var x) (log 3.0)) 
+                    (and 
+                        (le 
+                            (add 
+                                (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
+                                (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
+                            ) 
+                            1.0
+                        ) 
+                        (eq (sub (add (var x) (var y)) (var z)) 0.0)))
+            )
         )
     )"
 }
