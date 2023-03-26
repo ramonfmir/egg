@@ -200,22 +200,26 @@ impl Applier<Optimization, Meta> for MapExp {
         &self, 
         egraph: &mut EGraph, 
         matched_id: Id, 
-        subst: &Subst, 
-        searcher_pattern: Option<&PatternAst<Optimization>>, 
-        rule_name: Symbol
+        _subst: &Subst, 
+        _searcher_pattern: Option<&PatternAst<Optimization>>, 
+        _rule_name: Symbol
     ) -> Vec<Id> {
         //print!("EGraph {:?}", egraph.dump());
         let free_vars : HashSet<(Id, Symbol)> = egraph[matched_id].data.free_vars.clone();
 
         let mut res = vec![];
 
-        for (id, sym) in free_vars {
-            let y = egraph.add(Optimization::Symbol(sym));
-            let var = egraph.add(Optimization::Var(y));
-            let exp = egraph.add(Optimization::Exp(var));
-            
-            // We make (var x) = (exp (var x)).
+        for (id, sym) in free_vars {            
             if let Some((_, parent_id)) = egraph[id].parents().last() {
+                if egraph[parent_id].nodes.len() > 1 {
+                    continue;
+                }
+
+                let y = egraph.add(Optimization::Symbol(sym));
+                let var = egraph.add(Optimization::Var(y));
+                let exp = egraph.add(Optimization::Exp(var));
+
+                // We make (var x) = (exp (var x)).
                 if egraph.union(parent_id, exp) {
                     res.push(parent_id);
                 }
@@ -230,9 +234,10 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
     rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
     
-    rw!("eq-symm"; "(eq ?a ?b)" => "(eq ?b ?a)"),
-    rw!("eq-add-sub"; "(eq (add ?a ?b) ?c)" => "(eq ?a (sub ?c ?b))"),
-    rw!("eq-mul-div"; "(eq (mul ?a ?b) ?c)" => "(eq ?a (div ?c ?b))"),
+    rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
+    rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
+    rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)"),
+    rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)"),
 
     rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0.0)"),
     rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1.0)"),
@@ -300,10 +305,12 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
 
     rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
 
-    rw!("log-exp"; "(log (exp ?a))" => "?a"),
-
+    rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))"),
     rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))"),
 
+    rw!("log-exp"; "(log (exp ?a))" => "?a"),
+
+    rw!("eq-log"; "(eq ?a ?b)" => "(eq (log ?a) (log ?b))"),
     rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))"),
 
     rw!("map-objFun-log"; "(objFun ?a)" => "(objFun (log ?a))"),
@@ -392,30 +399,18 @@ egg::test_fn! {
     runner = 
         Runner::default()
         .with_node_limit(1000000)
-        .with_iter_limit(100)
-        .with_time_limit(Duration::from_secs(100)),
+        .with_iter_limit(10000)
+        .with_time_limit(Duration::from_secs(30)),
     "(prob 
         (objFun (div (var x) (var y))) 
         (constraints 
-            (and 
-                (le 2.0 (var x))
-                (and 
-                    (le (var x) 3.0)
-                    (eq (mul (var x) (var y)) (var z))
-                )
-            )
+            (eq (mul (var x) (var y)) (var z))
         )
     )" => 
     "(prob 
         (objFun (sub (var x) (var y))) 
         (constraints 
-            (and 
-                (le (log 2.0) (var x))
-                (and 
-                    (le (var x) (log 3.0)) 
-                    (eq (sub (add (var x) (var y)) (var z)) 0.0)
-                )
-            )
+            (eq (add (var x) (var y)) (var z))
         )
     )"
 }
