@@ -259,6 +259,7 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
     rw!("mul-1-right"; "(mul ?a 1.0)" => "?a"),
     rw!("mul-1-left"; "(mul 1.0 ?a)" => "?a"),
+    rw!("mul-1-left-gen"; "?a" => "(mul 1.0 ?a)"),
     rw!("mul-0-right"; "(mul ?a 0.0)" => "0.0"),
     rw!("mul-0-left"; "(mul 0.0 ?a)" => "0.0"),
 
@@ -269,7 +270,8 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
 
     rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
-    rw!("sub-mul"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
+    rw!("sub-mul-left"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
+    rw!("sub-mul-right"; "(sub (mul ?a ?b) (mul ?c ?b))" => "(mul (sub ?a ?c) ?b)"),
 
     rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)"),
     rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
@@ -404,16 +406,47 @@ egg::test_fn! {
     "(prob 
         (objFun (div (var x) (var y))) 
         (constraints 
-            (eq (mul (var x) (var y)) (var z))
+            (and
+                (eq (mul (var x) (var y)) (var z))
+                (le 2.0 (var x))
+            )
         )
     )" => 
     "(prob 
         (objFun (sub (var x) (var y))) 
         (constraints 
-            (eq (add (var x) (var y)) (var z))
+            (and
+                (eq (sub (add (var x) (var y)) (var z)) 0.0)
+                (le (log 2.0) (var x))
+            )
         )
     )"
 }
+
+
+egg::test_fn! {
+    test_5, rules(), 
+    runner = 
+        Runner::default()
+        .with_node_limit(1000000)
+        .with_iter_limit(10000)
+        .with_time_limit(Duration::from_secs(30)),
+    "(le 
+        (add 
+            (pow (exp (var x)) 2.0) 
+            (mul 3.0 (div (exp (var y)) (exp (var z))))
+        ) 
+        (pow (exp (var y)) 0.5)
+    )" => 
+    "(le 
+        (add 
+            (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
+            (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
+        ) 
+        1.0
+    )"
+}
+ 
 
 // #[derive(Debug)]
 // pub struct AntiAstSize;
