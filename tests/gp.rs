@@ -264,19 +264,19 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     
     rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
     rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
-    rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("c")),
-    rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)"),
+    rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
     rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0)"),
-    rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("b")),
+    rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("?b")),
 
     rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
     rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
-    rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("c")),
-    rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)"),
+    rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
     rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0)"),
-    rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("b")),
+    rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("?b")),
 
     rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
     rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
@@ -306,15 +306,15 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("sub-mul-same-right"; "(sub ?a (mul ?b ?a))" => "(mul ?a (sub 1 ?b))"),
     rw!("sub-mul-same-left"; "(sub (mul ?a ?b) ?a)" => "(mul ?a (sub ?b 1))"),
 
-    rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)"),
+    rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)" if is_not_zero("?c")),
     rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
 
     rw!("div-1"; "(div ?a 1.0)" => "?a"),
 
-    rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))"),
+    rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
     rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
 
-    rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))"),
+    rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
     rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
 
     rw!("sub-0"; "(sub ?a 0)" => "?a"),
@@ -328,6 +328,9 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
     rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
 
+    rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
+    rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
+
     rw!("exp-0"; "(exp 0)" => "1"),
 
     rw!("log-1"; "(log 1)" => "0"),
@@ -340,8 +343,8 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
 
     rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
 
-    rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))"),
-    rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))"),
+    rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
 
     rw!("log-exp"; "(log (exp ?a))" => "?a"),
 
@@ -489,23 +492,34 @@ egg::test_fn! {
     "(le (pow (var x) (-0.5)) 1)"
 }
 
-//(le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
-
-// (le 
-//     (add 
-//         (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
-//         (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
-//     ) 
-//     1.0
-// ) 
+// (e^x)^2 + 3(e^y)/(e^z) <= (e^y)^0.5
+// e^(2x - 0.5y) + 3e^(0.5y - z) <= 1
+egg::test_fn! {
+    test_exp_log_le_pow_div_through_hard, rules(), 
+    "(le 
+        (add 
+            (pow (exp (var x)) 2.0) 
+            (mul 3.0 (div (exp (var y)) (exp (var z))))
+        ) 
+        (pow (exp (var y)) 0.5)
+    )" => 
+    "(le 
+        (add 
+            (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
+            (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
+        ) 
+        1.0
+    )"
+}
 
 egg::test_fn! {
-    test_3, rules(), 
+    test_full_gp, rules(), 
     runner = 
         Runner::default()
-        .with_node_limit(1000000)
-        .with_iter_limit(100)
-        .with_time_limit(Duration::from_secs(100)),
+        // .with_node_limit(1000000)
+        // .with_iter_limit(100)
+        // .with_time_limit(Duration::from_secs(100))
+        .with_explanations_enabled(),
     "(prob 
         (objFun (div (var x) (var y))) 
         (constraints 
@@ -543,29 +557,90 @@ egg::test_fn! {
     )"
 }
 
-egg::test_fn! {
-    test_5, rules(), 
-    runner = 
+fn get_rewrites(e1 : &str, e2 : &str) {
+    let mut graph = 
+        EGraph::default()
+        .with_explanations_enabled();
+
+    let lhs : RecExpr<Optimization> = e1.parse().unwrap();
+    let rhs : RecExpr<Optimization> = e2.parse().unwrap();
+
+    let lhs_id = graph.add_expr(&lhs);
+    let rhs_id = graph.add_expr(&rhs);
+
+    let mut runner = 
         Runner::default()
-        .with_node_limit(1000000)
-        .with_iter_limit(10000)
-        .with_time_limit(Duration::from_secs(30)),
-    "(le 
-        (add 
-            (pow (exp (var x)) 2.0) 
-            (mul 3.0 (div (exp (var y)) (exp (var z))))
-        ) 
-        (pow (exp (var y)) 0.5)
-    )" => 
-    "(le 
-        (add 
-            (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
-            (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
-        ) 
-        1.0
-    )"
+        .with_egraph(graph)
+        .with_explanations_enabled();
+    runner = runner.run(&rules());
+
+    let mut egraph = runner.egraph;
+
+    if egraph.find(lhs_id) ==  egraph.find(rhs_id) {
+        println!("Found equivalence!");
+        let mut explanation : Explanation<Optimization> = 
+            egraph.explain_equivalence(&lhs,&rhs);
+        let flat_explanation : &FlatExplanation<Optimization> =
+            explanation.make_flat_explanation();
+        
+        for i in 0..flat_explanation.len() {
+            let expl = &flat_explanation[i];
+            if let Some(rule) = expl.forward_rule {
+                println!("Rule: {} (FWD)", rule);
+            } else if let Some(rule) = expl.backward_rule {
+                println!("Rule: {} (BWD)", rule);
+            }
+        }
+    }
 }
- 
+
+#[test]
+fn get_rewrites_easy() {
+    get_rewrites(
+        "(le (mul 3 (var x)) (var x))",
+        "(le (mul 2 (var x)) 0)"
+    )
+}
+
+#[test]
+fn get_rewrites_full_gp() {
+    get_rewrites(
+        "(prob 
+            (objFun (div (var x) (var y))) 
+            (constraints 
+                (and 
+                    (le 2 (var x))
+                    (and 
+                        (le (var x) 3) 
+                        (and 
+                            (le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
+                            (eq (mul (var x) (var y)) (var z))
+                        )
+                    
+                    )
+                )
+            )
+        )",
+        "(prob 
+            (objFun (sub (var x) (var y))) 
+            (constraints 
+                (and 
+                    (le (log 2.0) (var x))
+                    (and 
+                        (le (var x) (log 3.0)) 
+                        (and 
+                            (le 
+                                (add 
+                                    (exp (sub (mul 2.0 (var x)) (mul 0.5 (var y)))) 
+                                    (mul 3.0 (exp (sub (mul 0.5 (var y)) (var z))))
+                                ) 
+                                1.0
+                            ) 
+                            (eq (sub (add (var x) (var y)) (var z)) 0.0)))
+                )
+            )
+        )")
+}
 
 // #[derive(Debug)]
 // pub struct AntiAstSize;
