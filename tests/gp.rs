@@ -39,7 +39,7 @@ pub struct Meta;
 #[derive(Debug, Clone)]
 pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
-    constant: Option<Constant>,
+    constant: Option<(Constant, PatternAst<Optimization>)>,
 }
 
 impl Analysis<Optimization> for Meta {    
@@ -61,7 +61,7 @@ impl Analysis<Optimization> for Meta {
             |i: &Id| egraph[*i].data.constant.clone();
         
         let mut free_vars = HashSet::default();
-        let mut constant: Option<Constant> = None;
+        let mut constant: Option<(Constant, PatternAst<Optimization>)> = None;
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -89,8 +89,8 @@ impl Analysis<Optimization> for Meta {
             Optimization::Neg(a) => {
                 free_vars.extend(get_vars(a));
                 match get_constant(a) {
-                    Some(c) => { 
-                        constant = Some(-c); 
+                    Some((c, _)) => { 
+                        constant = Some((-c, format!("(neg {})", c).parse().unwrap())); 
                     }
                     _ => {}
                 }
@@ -99,8 +99,8 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { 
-                        constant = Some(c1 + c2); 
+                    (Some((c1, _)), Some((c2, _))) => { 
+                        constant = Some((c1 + c2, format!("(add {} {})", c1, c2).parse().unwrap())); 
                     }
                     _ => {}
                 }
@@ -109,8 +109,8 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { 
-                        constant = Some(c1 - c2); 
+                    (Some((c1, _)), Some((c2, _))) => { 
+                        constant = Some((c1 - c2, format!("(sub {} {})", c1, c2).parse().unwrap())); 
                     }
                     _ => {}
                 }
@@ -119,8 +119,8 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { 
-                        constant = Some(c1 * c2); 
+                    (Some((c1, _)), Some((c2, _))) => { 
+                        constant = Some((c1 * c2, format!("(mul {} {})", c1, c2).parse().unwrap())); 
                     }
                     _ => {}
                 }
@@ -129,8 +129,8 @@ impl Analysis<Optimization> for Meta {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
                 match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { 
-                        constant = Some(c1 / c2); 
+                    (Some((c1, _)), Some((c2, _))) => { 
+                        constant = Some((c1 / c2, format!("(div {} {})", c1, c2).parse().unwrap())); 
                     }
                     _ => {}
                 }
@@ -138,30 +138,30 @@ impl Analysis<Optimization> for Meta {
             Optimization::Pow([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                match (get_constant(a), get_constant(b)) {
-                    (Some(c1), Some(c2)) => { 
-                        constant = Some(NotNan::new(c1.powf(c2.into())).unwrap()); 
-                    }
-                    _ => {}
-                }
+                // match (get_constant(a), get_constant(b)) {
+                //     (Some(c1), Some(c2)) => { 
+                //         constant = Some(NotNan::new(c1.powf(c2.into())).unwrap()); 
+                //     }
+                //     _ => {}
+                // }
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
-                match get_constant(a) {
-                    Some(c) => { 
-                        constant = Some(NotNan::new(c.ln()).unwrap()); 
-                    }
-                    _ => {}
-                }
+                // match get_constant(a) {
+                //     Some(c) => { 
+                //         constant = Some(NotNan::new(c.ln()).unwrap()); 
+                //     }
+                //     _ => {}
+                // }
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
-                match get_constant(a) {
-                    Some(c) => { 
-                        constant = Some(NotNan::new(c.exp()).unwrap()); 
-                    }
-                    _ => {}
-                }
+                // match get_constant(a) {
+                //     Some(c) => { 
+                //         constant = Some(NotNan::new(c.exp()).unwrap()); 
+                //     }
+                //     _ => {}
+                // }
             }
             Optimization::Var(a) => {
                 // Assume that after var there is always a symbol.
@@ -174,7 +174,7 @@ impl Analysis<Optimization> for Meta {
             }
             Optimization::Symbol(_) => {}
             Optimization::Constant(f) => {
-                constant = Some(*f);
+                constant = Some((*f, format!("{}", f).parse().unwrap()));
             }
         }
 
@@ -184,9 +184,19 @@ impl Analysis<Optimization> for Meta {
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
         // Constant fold.
         let constant = egraph[id].data.constant.clone();
-        if let Some(c) = constant {
-            let const_id = egraph.add(Optimization::Constant(c));
-            egraph.union(id, const_id);
+        if let Some((c, pat)) = constant {
+            if egraph.are_explanations_enabled() {
+                egraph.union_instantiations(
+                    &pat,
+                    &format!("{}", c).parse().unwrap(),
+                    &Default::default(),
+                    "constant-fold".to_string(),
+                );
+            } 
+            else {
+                let const_id = egraph.add(Optimization::Constant(c));
+                egraph.union(id, const_id);
+            }
 
             // To not prune, comment this out.
             egraph[id].nodes.retain(|n| n.is_leaf());
@@ -221,13 +231,26 @@ impl Applier<Optimization, Meta> for MapExp {
                     continue;
                 }
 
-                let y = egraph.add(Optimization::Symbol(sym));
-                let var = egraph.add(Optimization::Var(y));
-                let exp = egraph.add(Optimization::Exp(var));
-
                 // We make (var x) = (exp (var x)).
-                if egraph.union(parent_id, exp) {
-                    res.push(parent_id);
+                if egraph.are_explanations_enabled() {
+                    let (_, did_union) = egraph.union_instantiations(
+                        &format!("(var {})", sym).parse().unwrap(),
+                        &format!("(exp (var {}))", sym).parse().unwrap(),
+                        &Default::default(),
+                        "map-exp".to_string(),
+                    );
+                    if did_union {
+                        res.push(parent_id);
+                    }
+                }
+                else {
+                    let y = egraph.add(Optimization::Symbol(sym));
+                    let var = egraph.add(Optimization::Var(y));
+                    let exp = egraph.add(Optimization::Exp(var));
+
+                    if egraph.union(parent_id, exp) {
+                        res.push(parent_id);
+                    }
                 }
             }
         }
@@ -239,7 +262,7 @@ impl Applier<Optimization, Meta> for MapExp {
 fn is_not_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     let var = var.parse().unwrap();
     move |egraph, _, subst| {
-        if let Some(n) = &egraph[subst[var]].data.constant {
+        if let Some((n, _)) = &egraph[subst[var]].data.constant {
             *(n) != 0.0
         } else {
             true
@@ -250,7 +273,7 @@ fn is_not_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
 fn is_gt_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     let var = var.parse().unwrap();
     move |egraph, _, subst| {
-        if let Some(n) = &egraph[subst[var]].data.constant {
+        if let Some((n, _)) = &egraph[subst[var]].data.constant {
             (*n).into_inner() > 0.0
         } else {
             true
@@ -287,7 +310,6 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
     rw!("mul-1-right"; "(mul ?a 1)" => "?a"),
     rw!("mul-1-left"; "(mul 1 ?a)" => "?a"),
-    //rw!("mul-1-left-gen"; "?a" => "(mul 1 ?a)"),
     rw!("mul-0-right"; "(mul ?a 0)" => "0"),
     rw!("mul-0-left"; "(mul 0 ?a)" => "0"),
 
@@ -356,6 +378,7 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
         "(prob (objFun ?o) (constraints ?cs))" => { MapExp {} } )
 ]}
 
+// Test exp map.
 egg::test_fn! {
     test_exp_map, rules(),
     "(prob 
@@ -372,6 +395,7 @@ egg::test_fn! {
     )"
 }
 
+// Test as above with log map and le constraint with multiplication.
 egg::test_fn! {
     test_exp_log_mul_le_mul, rules(),
     "(prob 
@@ -388,6 +412,7 @@ egg::test_fn! {
     )"
 }
 
+// Test as above objective function with division.
 egg::test_fn! {
     test_exp_log_div_le, rules(), 
     "(prob 
@@ -404,6 +429,7 @@ egg::test_fn! {
     )"
 }
 
+// Test as above with an equality constraint.
 egg::test_fn! {
     test_exp_log_div_eq_mul, rules(), 
     "(prob 
@@ -420,6 +446,7 @@ egg::test_fn! {
     )"
 }
 
+// Test combining the two previous tests with an and.
 egg::test_fn! {
     test_exp_log_div_and_le_eq_mul, rules(), 
     "(prob 
@@ -442,6 +469,7 @@ egg::test_fn! {
     )"
 }
 
+// Test including powers.
 egg::test_fn! {
     test_exp_log_le_pow, rules(), 
     "(prob 
@@ -458,6 +486,7 @@ egg::test_fn! {
     )"
 }
 
+// Test with mul and div on the constraint.
 egg::test_fn! {
     test_exp_log_le_mul_div, rules(), 
     "(prob 
@@ -474,26 +503,30 @@ egg::test_fn! {
     )"
 }
 
+// Test constant fold.
 egg::test_fn! {
     test_constant_fold, rules(), 
     "(sub 3 1)" => 
     "2"
 }
 
+// Test constant fold on le.
 egg::test_fn! {
     test_le_mul_constant_fold, rules(), 
     "(le (mul 3 (var x)) (var x))" => 
     "(le (mul 2 (var x)) 0)"
 }
 
+// Test diving through a power.
 egg::test_fn! {
     test_le_pow_div_through, rules(), 
     "(le (pow (var x) 0.5) (var x))" => 
     "(le (pow (var x) (-0.5)) 1)"
 }
 
-// (e^x)^2 + 3(e^y)/(e^z) <= (e^y)^0.5
-// e^(2x - 0.5y) + 3e^(0.5y - z) <= 1
+// Test from e1 to e2:
+//     e1 : (e^x)^2 + 3(e^y)/(e^z) <= (e^y)^0.5  
+//     e2 : e^(2x - 0.5y) + 3e^(0.5y - z) <= 1
 egg::test_fn! {
     test_exp_log_le_pow_div_through_hard, rules(), 
     "(le 
@@ -512,13 +545,14 @@ egg::test_fn! {
     )"
 }
 
+// Test full geometric program.
 egg::test_fn! {
     test_full_gp, rules(), 
     runner = 
         Runner::default()
-        // .with_node_limit(1000000)
-        // .with_iter_limit(100)
-        // .with_time_limit(Duration::from_secs(100))
+        .with_node_limit(10000)
+        .with_iter_limit(100)
+        .with_time_limit(Duration::from_secs(10))
         .with_explanations_enabled(),
     "(prob 
         (objFun (div (var x) (var y))) 
@@ -576,7 +610,7 @@ fn get_rewrites(e1 : &str, e2 : &str) {
 
     let mut egraph = runner.egraph;
 
-    if egraph.find(lhs_id) ==  egraph.find(rhs_id) {
+    if egraph.find(lhs_id) == egraph.find(rhs_id) {
         println!("Found equivalence!");
         let mut explanation : Explanation<Optimization> = 
             egraph.explain_equivalence(&lhs,&rhs);
@@ -585,15 +619,17 @@ fn get_rewrites(e1 : &str, e2 : &str) {
         
         for i in 0..flat_explanation.len() {
             let expl = &flat_explanation[i];
-            if let Some(rule) = expl.forward_rule {
-                println!("Rule: {} (FWD)", rule);
-            } else if let Some(rule) = expl.backward_rule {
-                println!("Rule: {} (BWD)", rule);
-            }
+            println!("Explanation: {}", expl.get_string());
+            // if let Some(rule) = expl.forward_rule {
+            //     println!("Rule: {} (FWD)", rule);
+            // } else if let Some(rule) = expl.backward_rule {
+            //     println!("Rule: {} (BWD)", rule);
+            // }
         }
     }
 }
 
+// Test get list of rewrites easy expression.
 #[test]
 fn get_rewrites_easy() {
     get_rewrites(
@@ -602,6 +638,7 @@ fn get_rewrites_easy() {
     )
 }
 
+// Test get list of rewrites from full geometric program.
 #[test]
 fn get_rewrites_full_gp() {
     get_rewrites(
@@ -616,7 +653,6 @@ fn get_rewrites_full_gp() {
                             (le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
                             (eq (mul (var x) (var y)) (var z))
                         )
-                    
                     )
                 )
             )
@@ -636,7 +672,9 @@ fn get_rewrites_full_gp() {
                                 ) 
                                 1.0
                             ) 
-                            (eq (sub (add (var x) (var y)) (var z)) 0.0)))
+                            (eq (sub (add (var x) (var y)) (var z)) 0.0)
+                        )
+                    )
                 )
             )
         )")
