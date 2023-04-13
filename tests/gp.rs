@@ -680,43 +680,43 @@ fn get_rewrites_full_gp() {
         )")
 }
 
-// #[derive(Debug)]
-// pub struct AntiAstSize;
-// impl<L: Language> CostFunction<L> for AntiAstSize {
-//     type Cost = i32;
-//     fn cost<C>(&mut self, enode: &L, mut costs: C) -> Self::Cost
-//     where
-//         C: FnMut(Id) -> Self::Cost,
-//     {
-//         0
-//     }
-// }
+#[derive(Debug)]
+pub struct DCPScore;
+impl CostFunction<Optimization> for DCPScore {
+    type Cost = i32;
+    fn cost<C>(&mut self, enode: &Optimization, mut costs: C) -> Self::Cost
+    where
+        C: FnMut(Id) -> Self::Cost,
+    {
+        0
+    }
+}
 
-// fn simplify(s: &str) -> String {
-//     let expr: RecExpr<Optimization> = s.parse().unwrap();
+fn simplify(s: &str) -> String {
+    let expr: RecExpr<Optimization> = s.parse().unwrap();
 
-//     let runner = Runner::default().with_expr(&expr).run(&rules());
+    let runner = Runner::default().with_expr(&expr).run(&rules());
     
-//     let root = runner.roots[0];
+    let root = runner.roots[0];
 
-//     let extractor = Extractor::new(&runner.egraph, AntiAstSize);
-//     let (best_cost, best) = extractor.find_best(root);
-//     println!("Simplified {} to {} with cost {}", expr, best, best_cost);
+    let extractor = Extractor::new(&runner.egraph, DCPScore);
+    let (best_cost, best) = extractor.find_best(root);
+    println!("Simplified {} to {} with cost {}", expr, best, best_cost);
 
-//     //print!("{}", runner.egraph);
+    //print!("{}", runner.egraph);
 
-//     return best.to_string();
-// }
+    return best.to_string();
+}
 
 
-// #[test]
-// fn simple_tests() {
-//     let r = simplify("
-//     (prob 
-//         (objFun (var x)) 
-//         (constraints 
-//             (le 1.0 (var x))
-//         )
-//     )");
-//     println!("simplified: {}", r);
-// }
+#[test]
+fn simple_tests() {
+    let r = simplify("
+    (prob 
+        (objFun (var x)) 
+        (constraints 
+            (le 1.0 (var x))
+        )
+    )");
+    println!("simplified: {}", r);
+}
