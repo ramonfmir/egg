@@ -36,10 +36,21 @@ type EGraph = egg::EGraph<Optimization, Meta>;
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Meta;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Curvature {
+    Convex,
+    Concave,
+    Affine,
+    Constant,
+    Valid,
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
     constant: Option<(Constant, PatternAst<Optimization>)>,
+    curvature: Curvature,
 }
 
 impl Analysis<Optimization> for Meta {    
@@ -59,32 +70,49 @@ impl Analysis<Optimization> for Meta {
             |i: &Id| egraph[*i].data.free_vars.iter().cloned();
         let get_constant = 
             |i: &Id| egraph[*i].data.constant.clone();
+        let get_curvature = 
+            |i: &Id| egraph[*i].data.curvature.clone();
         
         let mut free_vars = HashSet::default();
         let mut constant: Option<(Constant, PatternAst<Optimization>)> = None;
+        let mut curvature = Curvature::Unknown;
 
         match enode {
             Optimization::Prob([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Acceptable {
+                    curvature = Curvature::Convex;
+                }
             }
             Optimization::ObjFun(a) => {
                 free_vars.extend(get_vars(a));
+                curvature = get_curvature(a);
             }
             Optimization::Constraints(a) => {
                 free_vars.extend(get_vars(a));
+                curvature = get_curvature(a);
             }
             Optimization::And([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                if get_curvature(a) == Curvature::Valid && get_curvature(b) == Curvature::Valid {
+                    curvature = Curvature::Valid;
+                }
             }
             Optimization::Eq([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
+                    curvature = Curvature::Valid;
+                }
             }
             Optimization::Le([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
+                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Concave {
+                    curvature = Curvature::Valid;
+                }
             }
             Optimization::Neg(a) => {
                 free_vars.extend(get_vars(a));
@@ -93,6 +121,13 @@ impl Analysis<Optimization> for Meta {
                         constant = Some((-c, format!("(neg {})", c).parse().unwrap())); 
                     }
                     _ => {}
+                }
+                if get_curvature(a) == Curvature::Convex {
+                    curvature = Curvature::Concave;
+                } else if get_curvature(a) == Curvature::Concave {
+                    curvature = Curvature::Convex;
+                } else if get_curvature(a) == Curvature::Affine {
+                    curvature = Curvature::Affine;
                 }
             }
             Optimization::Add([a, b]) => {
@@ -104,6 +139,13 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
+                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Convex {
+                    curvature = Curvature::Convex;
+                } else if get_curvature(a) == Curvature::Concave && get_curvature(b) == Curvature::Concave {
+                    curvature = Curvature::Concave;
+                } else if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
+                    curvature = Curvature::Affine;
+                }
             }
             Optimization::Sub([a, b]) => {
                 free_vars.extend(get_vars(a));
@@ -114,6 +156,13 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
+                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Concave {
+                    curvature = Curvature::Convex;
+                } else if get_curvature(a) == Curvature::Concave && get_curvature(b) == Curvature::Convex {
+                    curvature = Curvature::Concave;
+                } else if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
+                    curvature = Curvature::Affine;
+                }
             }
             Optimization::Mul([a, b]) => {
                 free_vars.extend(get_vars(a));
@@ -121,6 +170,49 @@ impl Analysis<Optimization> for Meta {
                 match (get_constant(a), get_constant(b)) {
                     (Some((c1, _)), Some((c2, _))) => { 
                         constant = Some((c1 * c2, format!("(mul {} {})", c1, c2).parse().unwrap())); 
+                        curvature = Curvature::Constant;
+                    }
+                    (Some((c1, _)), None) => {
+                        if c1.into_inner() < 0.0 {
+                            if get_curvature(b) == Curvature::Concave {
+                                curvature = Curvature::Convex;
+                            } else if get_curvature(b) == Curvature::Convex {
+                                curvature = Curvature::Concave;
+                            } else if get_curvature(b) == Curvature::Affine {
+                                curvature = Curvature::Affine;
+                            }
+                        } else if c1.into_inner() > 0.0 {
+                            if get_curvature(b) == Curvature::Concave {
+                                curvature = Curvature::Concave;
+                            } else if get_curvature(b) == Curvature::Convex {
+                                curvature = Curvature::Convex;
+                            } else if get_curvature(b) == Curvature::Affine {
+                                curvature = Curvature::Affine;
+                            }
+                        } else {
+                            curvature = Curvature::Constant;
+                        }
+                    }
+                    (None, Some((c2, _))) => {
+                        if c2.into_inner() < 0.0 {
+                            if get_curvature(a) == Curvature::Concave {
+                                curvature = Curvature::Convex;
+                            } else if get_curvature(a) == Curvature::Convex {
+                                curvature = Curvature::Concave;
+                            } else if get_curvature(a) == Curvature::Affine {
+                                curvature = Curvature::Affine;
+                            }
+                        } else if c2.into_inner() > 0.0 {
+                            if get_curvature(a) == Curvature::Concave {
+                                curvature = Curvature::Concave;
+                            } else if get_curvature(a) == Curvature::Convex {
+                                curvature = Curvature::Convex;
+                            } else if get_curvature(a) == Curvature::Affine {
+                                curvature = Curvature::Affine;
+                            }
+                        } else {
+                            curvature = Curvature::Constant;
+                        }
                     }
                     _ => {}
                 }
@@ -134,34 +226,23 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
+
             }
             Optimization::Pow([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                // match (get_constant(a), get_constant(b)) {
-                //     (Some(c1), Some(c2)) => { 
-                //         constant = Some(NotNan::new(c1.powf(c2.into())).unwrap()); 
-                //     }
-                //     _ => {}
-                // }
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
-                // match get_constant(a) {
-                //     Some(c) => { 
-                //         constant = Some(NotNan::new(c.ln()).unwrap()); 
-                //     }
-                //     _ => {}
-                // }
+                if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Concave {
+                    curvature = Curvature::Concave;
+                }
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
-                // match get_constant(a) {
-                //     Some(c) => { 
-                //         constant = Some(NotNan::new(c.exp()).unwrap()); 
-                //     }
-                //     _ => {}
-                // }
+                if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Convex {
+                    curvature = Curvature::Convex;
+                }
             }
             Optimization::Var(a) => {
                 // Assume that after var there is always a symbol.
@@ -171,14 +252,16 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
+                curvature = Curvature::Affine;
             }
             Optimization::Symbol(_) => {}
             Optimization::Constant(f) => {
                 constant = Some((*f, format!("{}", f).parse().unwrap()));
+                curvature = Curvature::Constant;
             }
         }
 
-        Data { free_vars, constant }
+        Data { free_vars, constant, curvature }
     }
 
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
