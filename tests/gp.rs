@@ -2,6 +2,7 @@ use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
 use instant::Duration;
 use ordered_float::NotNan;
+use std::fs;
 
 pub type Constant = NotNan<f64>;
 
@@ -57,7 +58,17 @@ impl Analysis<Optimization> for Meta {
     type Data = Data;
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> DidMerge {
         let before_len = to.free_vars.len();
-        //to.free_vars.extend(&from.free_vars);
+
+        println!("Merging {:?} {:?}", from.curvature, to.curvature);
+
+        // if from.curvature == Curvature::Affine {
+        //     to.curvature = Curvature::Affine;
+        // }
+
+        // if to.curvature == Curvature::Unknown {
+        //     to.curvature = from.curvature.clone();
+        // }
+
         to.free_vars.retain(|i| from.free_vars.contains(i));
         DidMerge(
             before_len != to.free_vars.len(),
@@ -81,13 +92,15 @@ impl Analysis<Optimization> for Meta {
             Optimization::Prob([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Acceptable {
-                    curvature = Curvature::Convex;
-                }
+                // if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Valid {
+                //     curvature = Curvature::Convex;
+                // }
             }
             Optimization::ObjFun(a) => {
                 free_vars.extend(get_vars(a));
-                curvature = get_curvature(a);
+                // if get_curvature(a) == Curvature::Convex || get_curvature(a) == Curvature::Affine  {
+                //     curvature = Curvature::Convex;
+                // }
             }
             Optimization::Constraints(a) => {
                 free_vars.extend(get_vars(a));
@@ -96,23 +109,32 @@ impl Analysis<Optimization> for Meta {
             Optimization::And([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                if get_curvature(a) == Curvature::Valid && get_curvature(b) == Curvature::Valid {
-                    curvature = Curvature::Valid;
-                }
+                // if get_curvature(a) == Curvature::Valid && get_curvature(b) == Curvature::Valid {
+                //     curvature = Curvature::Valid;
+                // }
             }
             Optimization::Eq([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
-                    curvature = Curvature::Valid;
-                }
+                // if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
+                //     curvature = Curvature::Valid;
+                // }
             }
             Optimization::Le([a, b]) => {
                 free_vars.extend(get_vars(a));
                 free_vars.extend(get_vars(b));
-                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Concave {
-                    curvature = Curvature::Valid;
-                }
+                // match (get_curvature(a), get_curvature(b)) {
+                //     (Curvature::Convex,   Curvature::Concave)  => { curvature = Curvature::Valid; }
+                //     (Curvature::Convex,   Curvature::Affine)   => { curvature = Curvature::Valid; }
+                //     (Curvature::Convex,   Curvature::Constant) => { curvature = Curvature::Valid; }
+                //     (Curvature::Affine,   Curvature::Concave)  => { curvature = Curvature::Valid; }
+                //     (Curvature::Constant, Curvature::Concave)  => { curvature = Curvature::Valid; }
+                //     (Curvature::Affine,   Curvature::Affine)   => { curvature = Curvature::Valid; }
+                //     (Curvature::Constant, Curvature::Affine)   => { curvature = Curvature::Valid; }
+                //     (Curvature::Affine,   Curvature::Constant) => { curvature = Curvature::Valid; }
+                //     (Curvature::Constant, Curvature::Constant) => { curvature = Curvature::Valid; }
+                //     _ => { curvature = Curvature::Unknown; }
+                // } 
             }
             Optimization::Neg(a) => {
                 free_vars.extend(get_vars(a));
@@ -122,13 +144,15 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
-                if get_curvature(a) == Curvature::Convex {
-                    curvature = Curvature::Concave;
-                } else if get_curvature(a) == Curvature::Concave {
-                    curvature = Curvature::Convex;
-                } else if get_curvature(a) == Curvature::Affine {
-                    curvature = Curvature::Affine;
-                }
+                // if get_curvature(a) == Curvature::Convex {
+                //     curvature = Curvature::Concave;
+                // } else if get_curvature(a) == Curvature::Concave {
+                //     curvature = Curvature::Convex;
+                // } else if get_curvature(a) == Curvature::Affine {
+                //     curvature = Curvature::Affine;
+                // } else if get_curvature(a) == Curvature::Constant {
+                //     curvature = Curvature::Constant;
+                // }
             }
             Optimization::Add([a, b]) => {
                 free_vars.extend(get_vars(a));
@@ -136,16 +160,30 @@ impl Analysis<Optimization> for Meta {
                 match (get_constant(a), get_constant(b)) {
                     (Some((c1, _)), Some((c2, _))) => { 
                         constant = Some((c1 + c2, format!("(add {} {})", c1, c2).parse().unwrap())); 
+                        // curvature = Curvature::Constant;
                     }
                     _ => {}
                 }
-                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Convex {
-                    curvature = Curvature::Convex;
-                } else if get_curvature(a) == Curvature::Concave && get_curvature(b) == Curvature::Concave {
-                    curvature = Curvature::Concave;
-                } else if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
-                    curvature = Curvature::Affine;
-                }
+                // match (get_curvature(a), get_curvature(b)) {
+                //     (Curvature::Convex,   Curvature::Convex)   => { curvature = Curvature::Convex; }
+                //     (Curvature::Convex,   Curvature::Affine)   => { curvature = Curvature::Convex; }
+                //     (Curvature::Convex,   Curvature::Constant) => { curvature = Curvature::Convex; }
+                //     (Curvature::Affine,   Curvature::Convex)   => { curvature = Curvature::Convex; }
+                //     (Curvature::Constant, Curvature::Convex)   => { curvature = Curvature::Convex; }
+
+                //     (Curvature::Concave,  Curvature::Concave)  => { curvature = Curvature::Concave; }
+                //     (Curvature::Concave,  Curvature::Affine)   => { curvature = Curvature::Concave; }
+                //     (Curvature::Concave,  Curvature::Constant) => { curvature = Curvature::Concave; }
+                //     (Curvature::Affine,   Curvature::Concave)  => { curvature = Curvature::Concave; }
+                //     (Curvature::Constant, Curvature::Concave)  => { curvature = Curvature::Concave; }
+
+                //     (Curvature::Affine,   Curvature::Affine)   => { curvature = Curvature::Affine; }
+                //     (Curvature::Affine,   Curvature::Constant) => { curvature = Curvature::Affine; }
+                //     (Curvature::Constant, Curvature::Affine)   => { curvature = Curvature::Affine; }
+
+                //     (Curvature::Constant, Curvature::Constant) => { curvature = Curvature::Constant; }
+                //     _ => {}
+                // }
             }
             Optimization::Sub([a, b]) => {
                 free_vars.extend(get_vars(a));
@@ -153,16 +191,30 @@ impl Analysis<Optimization> for Meta {
                 match (get_constant(a), get_constant(b)) {
                     (Some((c1, _)), Some((c2, _))) => { 
                         constant = Some((c1 - c2, format!("(sub {} {})", c1, c2).parse().unwrap())); 
+                        // curvature = Curvature::Constant;
                     }
                     _ => {}
                 }
-                if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Concave {
-                    curvature = Curvature::Convex;
-                } else if get_curvature(a) == Curvature::Concave && get_curvature(b) == Curvature::Convex {
-                    curvature = Curvature::Concave;
-                } else if get_curvature(a) == Curvature::Affine && get_curvature(b) == Curvature::Affine {
-                    curvature = Curvature::Affine;
-                }
+                // match (get_curvature(a), get_curvature(b)) {
+                //     (Curvature::Convex,   Curvature::Concave)  => { curvature = Curvature::Convex; }
+                //     (Curvature::Convex,   Curvature::Affine)   => { curvature = Curvature::Convex; }
+                //     (Curvature::Convex,   Curvature::Constant) => { curvature = Curvature::Convex; }
+                //     (Curvature::Affine,   Curvature::Concave)  => { curvature = Curvature::Convex; }
+                //     (Curvature::Constant, Curvature::Concave)  => { curvature = Curvature::Convex; }
+
+                //     (Curvature::Concave,  Curvature::Convex)   => { curvature = Curvature::Concave; }
+                //     (Curvature::Concave,  Curvature::Affine)   => { curvature = Curvature::Concave; }
+                //     (Curvature::Concave,  Curvature::Constant) => { curvature = Curvature::Concave; }
+                //     (Curvature::Affine,   Curvature::Convex)   => { curvature = Curvature::Concave; }
+                //     (Curvature::Constant, Curvature::Convex)   => { curvature = Curvature::Concave; }
+
+                //     (Curvature::Affine,   Curvature::Affine)   => { curvature = Curvature::Affine; }
+                //     (Curvature::Affine,   Curvature::Constant) => { curvature = Curvature::Affine; }
+                //     (Curvature::Constant, Curvature::Affine)   => { curvature = Curvature::Affine; }
+
+                //     (Curvature::Constant, Curvature::Constant) => { curvature = Curvature::Constant; }
+                //     _ => {}
+                // }
             }
             Optimization::Mul([a, b]) => {
                 free_vars.extend(get_vars(a));
@@ -170,50 +222,50 @@ impl Analysis<Optimization> for Meta {
                 match (get_constant(a), get_constant(b)) {
                     (Some((c1, _)), Some((c2, _))) => { 
                         constant = Some((c1 * c2, format!("(mul {} {})", c1, c2).parse().unwrap())); 
-                        curvature = Curvature::Constant;
+                        // curvature = Curvature::Constant;
                     }
-                    (Some((c1, _)), None) => {
-                        if c1.into_inner() < 0.0 {
-                            if get_curvature(b) == Curvature::Concave {
-                                curvature = Curvature::Convex;
-                            } else if get_curvature(b) == Curvature::Convex {
-                                curvature = Curvature::Concave;
-                            } else if get_curvature(b) == Curvature::Affine {
-                                curvature = Curvature::Affine;
-                            }
-                        } else if c1.into_inner() > 0.0 {
-                            if get_curvature(b) == Curvature::Concave {
-                                curvature = Curvature::Concave;
-                            } else if get_curvature(b) == Curvature::Convex {
-                                curvature = Curvature::Convex;
-                            } else if get_curvature(b) == Curvature::Affine {
-                                curvature = Curvature::Affine;
-                            }
-                        } else {
-                            curvature = Curvature::Constant;
-                        }
-                    }
-                    (None, Some((c2, _))) => {
-                        if c2.into_inner() < 0.0 {
-                            if get_curvature(a) == Curvature::Concave {
-                                curvature = Curvature::Convex;
-                            } else if get_curvature(a) == Curvature::Convex {
-                                curvature = Curvature::Concave;
-                            } else if get_curvature(a) == Curvature::Affine {
-                                curvature = Curvature::Affine;
-                            }
-                        } else if c2.into_inner() > 0.0 {
-                            if get_curvature(a) == Curvature::Concave {
-                                curvature = Curvature::Concave;
-                            } else if get_curvature(a) == Curvature::Convex {
-                                curvature = Curvature::Convex;
-                            } else if get_curvature(a) == Curvature::Affine {
-                                curvature = Curvature::Affine;
-                            }
-                        } else {
-                            curvature = Curvature::Constant;
-                        }
-                    }
+                    // (Some((c1, _)), None) => {
+                    //     if c1.into_inner() < 0.0 {
+                    //         if get_curvature(b) == Curvature::Concave {
+                    //             curvature = Curvature::Convex;
+                    //         } else if get_curvature(b) == Curvature::Convex {
+                    //             curvature = Curvature::Concave;
+                    //         } else if get_curvature(b) == Curvature::Affine {
+                    //             curvature = Curvature::Affine;
+                    //         }
+                    //     } else if c1.into_inner() > 0.0 {
+                    //         if get_curvature(b) == Curvature::Concave {
+                    //             curvature = Curvature::Concave;
+                    //         } else if get_curvature(b) == Curvature::Convex {
+                    //             curvature = Curvature::Convex;
+                    //         } else if get_curvature(b) == Curvature::Affine {
+                    //             curvature = Curvature::Affine;
+                    //         }
+                    //     } else {
+                    //         curvature = Curvature::Constant;
+                    //     }
+                    // }
+                    // (None, Some((c2, _))) => {
+                    //     if c2.into_inner() < 0.0 {
+                    //         if get_curvature(a) == Curvature::Concave {
+                    //             curvature = Curvature::Convex;
+                    //         } else if get_curvature(a) == Curvature::Convex {
+                    //             curvature = Curvature::Concave;
+                    //         } else if get_curvature(a) == Curvature::Affine {
+                    //             curvature = Curvature::Affine;
+                    //         }
+                    //     } else if c2.into_inner() > 0.0 {
+                    //         if get_curvature(a) == Curvature::Concave {
+                    //             curvature = Curvature::Concave;
+                    //         } else if get_curvature(a) == Curvature::Convex {
+                    //             curvature = Curvature::Convex;
+                    //         } else if get_curvature(a) == Curvature::Affine {
+                    //             curvature = Curvature::Affine;
+                    //         }
+                    //     } else {
+                    //         curvature = Curvature::Constant;
+                    //     }
+                    // }
                     _ => {}
                 }
             }
@@ -234,15 +286,21 @@ impl Analysis<Optimization> for Meta {
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
-                if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Concave {
-                    curvature = Curvature::Concave;
-                }
+                // if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Concave {
+                //     curvature = Curvature::Concave;
+                // }
+                // if get_curvature(a) == Curvature::Constant {
+                //     curvature = Curvature::Constant;
+                // }
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
-                if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Convex {
-                    curvature = Curvature::Convex;
-                }
+                // if get_curvature(a) == Curvature::Affine || get_curvature(a) == Curvature::Convex {
+                //     curvature = Curvature::Convex;
+                // }
+                // if get_curvature(a) == Curvature::Constant {
+                //     curvature = Curvature::Constant;
+                // }
             }
             Optimization::Var(a) => {
                 // Assume that after var there is always a symbol.
@@ -252,12 +310,12 @@ impl Analysis<Optimization> for Meta {
                     }
                     _ => {}
                 }
-                curvature = Curvature::Affine;
+                // curvature = Curvature::Affine;
             }
             Optimization::Symbol(_) => {}
             Optimization::Constant(f) => {
                 constant = Some((*f, format!("{}", f).parse().unwrap()));
-                curvature = Curvature::Constant;
+                // curvature = Curvature::Constant;
             }
         }
 
@@ -316,7 +374,7 @@ impl Applier<Optimization, Meta> for MapExp {
 
                 // We make (var x) = (exp (var x)).
                 if egraph.are_explanations_enabled() {
-                    let (_, did_union) = egraph.union_instantiations(
+                    let (new_id, did_union) = egraph.union_instantiations(
                         &format!("(var {})", sym).parse().unwrap(),
                         &format!("(exp (var {}))", sym).parse().unwrap(),
                         &Default::default(),
@@ -331,6 +389,7 @@ impl Applier<Optimization, Meta> for MapExp {
                     let var = egraph.add(Optimization::Var(y));
                     let exp = egraph.add(Optimization::Exp(var));
 
+                    // egraph[parent_id].data.curvature = Curvature::ExpVar;
                     if egraph.union(parent_id, exp) {
                         res.push(parent_id);
                     }
@@ -364,97 +423,111 @@ fn is_gt_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
     }
 }
 
+// fn log_le_curv_check(a: &str, b: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
+//     let a = a.parse().unwrap();
+//     let b = b.parse().unwrap();
+//     move |egraph, _, subst| {
+//         let curv_a = &egraph[subst[a]].data.curvature;
+//         let curv_b = &egraph[subst[b]].data.curvature;
+//         if *curv_b == Curvature::Convex {
+//             true 
+//         } else {
+//             false
+//         }
+//     }
+// }
+
 pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
-    rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
-    rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
+    // rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
+    // rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
     
-    rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
-    rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
-    rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("?c")),
-    rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)" if is_not_zero("?c")),
+    // rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
+    // rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
+    // rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("?c")),
+    // rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
-    rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0)"),
-    rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("?b")),
+    // rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0)"),
+    // rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("?b")),
 
-    rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
-    rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
-    rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("?c")),
-    rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)" if is_not_zero("?c")),
+    // rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
+    // rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
+    // rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("?c")),
+    // rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
-    rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0)"),
-    rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("?b")),
+    // rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0)"),
+    // rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("?b")),
 
-    rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
-    rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
-    rw!("add-0-right"; "(add ?a 0)" => "?a"),
-    rw!("add-0-left"; "(add 0 ?a)" => "?a"),
+    // rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
+    // rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
+    // rw!("add-0-right"; "(add ?a 0)" => "?a"),
+    // rw!("add-0-left"; "(add 0 ?a)" => "?a"),
     
-    rw!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
-    rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
-    rw!("mul-1-right"; "(mul ?a 1)" => "?a"),
-    rw!("mul-1-left"; "(mul 1 ?a)" => "?a"),
-    rw!("mul-0-right"; "(mul ?a 0)" => "0"),
-    rw!("mul-0-left"; "(mul 0 ?a)" => "0"),
+    // rw!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+    // rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
+    // rw!("mul-1-right"; "(mul ?a 1)" => "?a"),
+    // rw!("mul-1-left"; "(mul 1 ?a)" => "?a"),
+    // rw!("mul-0-right"; "(mul ?a 0)" => "0"),
+    // rw!("mul-0-left"; "(mul 0 ?a)" => "0"),
 
-    rw!("add-sub"; "(add ?a (sub ?b ?c))" => "(sub (add ?a ?b) ?c)"),
-    rw!("sub-add"; "(sub (add ?a ?b) ?c)" => "(add ?a (sub ?b ?c))"),
+    // rw!("add-sub"; "(add ?a (sub ?b ?c))" => "(sub (add ?a ?b) ?c)"),
+    // rw!("sub-add"; "(sub (add ?a ?b) ?c)" => "(add ?a (sub ?b ?c))"),
 
-    rw!("mul-add"; "(mul ?a (add ?b ?c))" => "(add (mul ?a ?b) (mul ?a ?c))"),
-    rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
+    // rw!("mul-add"; "(mul ?a (add ?b ?c))" => "(add (mul ?a ?b) (mul ?a ?c))"),
+    // rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
 
-    rw!("add-mul-same"; "(add ?a (mul ?b ?a))" => "(mul ?a (add 1 ?b))"),
+    // rw!("add-mul-same"; "(add ?a (mul ?b ?a))" => "(mul ?a (add 1 ?b))"),
 
-    rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
-    rw!("sub-mul-left"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
-    rw!("sub-mul-right"; "(sub (mul ?a ?b) (mul ?c ?b))" => "(mul (sub ?a ?c) ?b)"),
+    // rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
+    // rw!("sub-mul-left"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
+    // rw!("sub-mul-right"; "(sub (mul ?a ?b) (mul ?c ?b))" => "(mul (sub ?a ?c) ?b)"),
 
-    rw!("sub-mul-same-right"; "(sub ?a (mul ?b ?a))" => "(mul ?a (sub 1 ?b))"),
-    rw!("sub-mul-same-left"; "(sub (mul ?a ?b) ?a)" => "(mul ?a (sub ?b 1))"),
+    // rw!("sub-mul-same-right"; "(sub ?a (mul ?b ?a))" => "(mul ?a (sub 1 ?b))"),
+    // rw!("sub-mul-same-left"; "(sub (mul ?a ?b) ?a)" => "(mul ?a (sub ?b 1))"),
 
-    rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)" if is_not_zero("?c")),
-    rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
+    // rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)" if is_not_zero("?c")),
+    // rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
 
-    rw!("div-1"; "(div ?a 1.0)" => "?a"),
+    // rw!("div-1"; "(div ?a 1.0)" => "?a"),
+    
+    // rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
+    // rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
 
-    rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
-    rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
+    // rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
+    // rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
 
-    rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
-    rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
+    // rw!("sub-0"; "(sub ?a 0)" => "?a"),
 
-    rw!("sub-0"; "(sub ?a 0)" => "?a"),
+    // rw!("pow-1"; "(pow ?a 1)" => "?a"),
+    // rw!("pow-0"; "(pow ?a 0)" => "1"),
 
-    rw!("pow-1"; "(pow ?a 1)" => "?a"),
-    rw!("pow-0"; "(pow ?a 0)" => "1"),
+    // rw!("pow-add"; "(pow ?a (add ?b ?c))" => "(mul (pow ?a ?b) (pow ?a ?c))"),
+    // rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
 
-    rw!("pow-add"; "(pow ?a (add ?b ?c))" => "(mul (pow ?a ?b) (pow ?a ?c))"),
-    rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
+    // rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
+    // rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
 
-    rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
-    rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
+    // rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
+    // rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
 
-    rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
-    rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
+    // rw!("exp-0"; "(exp 0)" => "1"),
 
-    rw!("exp-0"; "(exp 0)" => "1"),
+    // rw!("log-1"; "(log 1)" => "0"),
 
-    rw!("log-1"; "(log 1)" => "0"),
-
-    rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
+    // rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
     rw!("mul-exp"; "(mul (exp ?a) (exp ?b))" => "(exp (add ?a ?b))"),
 
-    rw!("exp-sub"; "(exp (sub ?a ?b))" => "(div (exp ?a) (exp ?b))"),
-    rw!("div-exp"; "(div (exp ?a) (exp ?b))" => "(exp (sub ?a ?b))"),
+    // rw!("exp-sub"; "(exp (sub ?a ?b))" => "(div (exp ?a) (exp ?b))"),
+    // rw!("div-exp"; "(div (exp ?a) (exp ?b))" => "(exp (sub ?a ?b))"),
 
-    rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
+    // rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
 
-    rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
-    rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    // rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    // rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
 
     rw!("log-exp"; "(log (exp ?a))" => "?a"),
 
-    rw!("eq-log"; "(eq ?a ?b)" => "(eq (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
-    rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    // rw!("eq-log"; "(eq ?a ?b)" => "(eq (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b") if log_le_curv_check("?a", "?b")),
 
     rw!("map-objFun-log"; "(objFun ?a)" => "(objFun (log ?a))" if is_gt_zero("?a")),
     rw!("map-domain-exp"; 
@@ -764,14 +837,23 @@ fn get_rewrites_full_gp() {
 }
 
 #[derive(Debug)]
-pub struct DCPScore;
-impl CostFunction<Optimization> for DCPScore {
-    type Cost = i32;
-    fn cost<C>(&mut self, enode: &Optimization, mut costs: C) -> Self::Cost
+struct DCPScore<'a> {
+    egraph: &'a EGraph,
+    id : Id,
+}
+
+impl<'a> CostFunction<Optimization> for DCPScore<'a> {
+    type Cost = usize;
+    fn cost<C>(&mut self, _enode: &Optimization, mut _costs: C) -> Self::Cost
     where
-        C: FnMut(Id) -> Self::Cost,
+        C: FnMut(Id) -> Self::Cost
     {
-        0
+        // This doesn't work because curvature is not e-class invariant.
+        let curvature = self.egraph[self.id].data.curvature.clone();
+        if curvature == Curvature::Convex {
+            return 0;
+        }
+        return 100;
     }
 }
 
@@ -781,8 +863,15 @@ fn simplify(s: &str) -> String {
     let runner = Runner::default().with_expr(&expr).run(&rules());
     
     let root = runner.roots[0];
+    
+    println!("Number of nodes: {}", runner.egraph.total_number_of_nodes());
+    println!("Number of e-classes: {}", runner.egraph.number_of_classes());
 
-    let extractor = Extractor::new(&runner.egraph, DCPScore);
+    let dot_str =  runner.egraph.dot().to_string();
+    fs::write("test.dot", dot_str).expect("");
+
+    let cost_func = DCPScore { egraph: &runner.egraph, id: root };
+    let extractor = Extractor::new(&runner.egraph, cost_func);
     let (best_cost, best) = extractor.find_best(root);
     println!("Simplified {} to {} with cost {}", expr, best, best_cost);
 
@@ -791,14 +880,43 @@ fn simplify(s: &str) -> String {
     return best.to_string();
 }
 
-
+// Exp of log is a smal issue becuase we do that union and then apply log which is not class invariant.
 #[test]
 fn simple_tests() {
     let r = simplify("
     (prob 
         (objFun (var x)) 
         (constraints 
-            (le 1.0 (var x))
+            (le 10.0 (mul (var x) (var x)))
+        )
+    )");
+    println!("simplified: {}", r);
+}
+
+#[test]
+fn simpler_tests() {
+    let r = simplify("
+    (mul (exp (var x)) (exp (var x)))");
+    println!("simplified: {}", r);
+}
+
+
+
+#[test]
+fn hard_test() {
+    let r = simplify("(prob 
+        (objFun (div (var x) (var y))) 
+        (constraints 
+            (and 
+                (le 2 (var x))
+                (and 
+                    (le (var x) 3) 
+                    (and 
+                        (le (add (pow (var x) 2.0) (mul 3.0 (div (var y) (var z)))) (pow (var y) 0.5)) 
+                        (eq (mul (var x) (var y)) (var z))
+                    )
+                )
+            )
         )
     )");
     println!("simplified: {}", r);
