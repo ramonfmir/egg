@@ -2,7 +2,7 @@ use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
 use instant::Duration;
 use ordered_float::NotNan;
-use std::fs;
+use std::{fs};
 
 pub type Constant = NotNan<f64>;
 
@@ -58,8 +58,6 @@ impl Analysis<Optimization> for Meta {
     type Data = Data;
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> DidMerge {
         let before_len = to.free_vars.len();
-
-        println!("Merging {:?} {:?}", from.curvature, to.curvature);
 
         // if from.curvature == Curvature::Affine {
         //     to.curvature = Curvature::Affine;
@@ -371,17 +369,21 @@ impl Applier<Optimization, Meta> for MapExp {
                 if egraph[parent_id].nodes.len() > 1 {
                     continue;
                 }
+                // if &format!("{}", sym)[0..1] == "u" {
+                //     continue;
+                // }
 
-                // We make (var x) = (exp (var x)).
+                // We make (var x) = (exp (var ux)).
                 if egraph.are_explanations_enabled() {
                     let (new_id, did_union) = egraph.union_instantiations(
                         &format!("(var {})", sym).parse().unwrap(),
-                        &format!("(exp (var {}))", sym).parse().unwrap(),
+                        &format!("(exp (var u{}))", sym).parse().unwrap(),
                         &Default::default(),
                         "map-exp".to_string(),
                     );
                     if did_union {
                         res.push(parent_id);
+                        res.push(new_id);
                     }
                 }
                 else {
@@ -438,96 +440,96 @@ fn is_gt_zero(var: &str) -> impl Fn(&mut EGraph, Id, &Subst) -> bool {
 // }
 
 pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
-    // rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
-    // rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
+    rw!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
+    rw!("and-assoc"; "(and (and ?a ?b) ?c)" => "(and ?a (and ?b ?c))"),
     
-    // rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
-    // rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
-    // rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("?c")),
-    // rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("eq-add"; "(eq ?a (add ?b ?c))" => "(eq (sub ?a ?c) ?b)"),
+    rw!("eq-sub"; "(eq ?a (sub ?b ?c))" => "(eq (add ?a ?c) ?b)"),
+    rw!("eq-mul"; "(eq ?a (mul ?b ?c))" => "(eq (div ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("eq-div"; "(eq ?a (div ?b ?c))" => "(eq (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
-    // rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0)"),
-    // rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("?b")),
+    rw!("eq-sub-zero"; "(eq ?a ?b)" => "(eq (sub ?a ?b) 0)"),
+    rw!("eq-div-one"; "(eq ?a ?b)" => "(eq (div ?a ?b) 1)" if is_not_zero("?b")),
 
-    // rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
-    // rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
-    // rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("?c")),
-    // rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("le-sub"; "(le ?a (sub ?b ?c))" => "(le (add ?a ?c) ?b)"),
+    rw!("le-add"; "(le ?a (add ?b ?c))" => "(le (sub ?a ?c) ?b)"),
+    rw!("le-mul"; "(le ?a (mul ?b ?c))" => "(le (div ?a ?c) ?b)" if is_not_zero("?c")),
+    rw!("le-div"; "(le ?a (div ?b ?c))" => "(le (mul ?a ?c) ?b)" if is_not_zero("?c")),
 
-    // rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0)"),
-    // rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("?b")),
+    rw!("le-sub-zero"; "(le ?a ?b)" => "(le (sub ?a ?b) 0)"),
+    rw!("le-div-one"; "(le ?a ?b)" => "(le (div ?a ?b) 1)" if is_not_zero("?b")),
 
-    // rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
-    // rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
-    // rw!("add-0-right"; "(add ?a 0)" => "?a"),
-    // rw!("add-0-left"; "(add 0 ?a)" => "?a"),
+    rw!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
+    rw!("add-assoc"; "(add (add ?a ?b) ?c)" => "(add ?a (add ?b ?c))"),
+    rw!("add-0-right"; "(add ?a 0)" => "?a"),
+    rw!("add-0-left"; "(add 0 ?a)" => "?a"),
     
-    // rw!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
-    // rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
-    // rw!("mul-1-right"; "(mul ?a 1)" => "?a"),
-    // rw!("mul-1-left"; "(mul 1 ?a)" => "?a"),
-    // rw!("mul-0-right"; "(mul ?a 0)" => "0"),
-    // rw!("mul-0-left"; "(mul 0 ?a)" => "0"),
+    rw!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+    rw!("mul-assoc"; "(mul (mul ?a ?b) ?c)" => "(mul ?a (mul ?b ?c))"),
+    rw!("mul-1-right"; "(mul ?a 1)" => "?a"),
+    rw!("mul-1-left"; "(mul 1 ?a)" => "?a"),
+    rw!("mul-0-right"; "(mul ?a 0)" => "0"),
+    rw!("mul-0-left"; "(mul 0 ?a)" => "0"),
 
-    // rw!("add-sub"; "(add ?a (sub ?b ?c))" => "(sub (add ?a ?b) ?c)"),
-    // rw!("sub-add"; "(sub (add ?a ?b) ?c)" => "(add ?a (sub ?b ?c))"),
+    rw!("add-sub"; "(add ?a (sub ?b ?c))" => "(sub (add ?a ?b) ?c)"),
+    rw!("sub-add"; "(sub (add ?a ?b) ?c)" => "(add ?a (sub ?b ?c))"),
 
-    // rw!("mul-add"; "(mul ?a (add ?b ?c))" => "(add (mul ?a ?b) (mul ?a ?c))"),
-    // rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
+    rw!("mul-add"; "(mul ?a (add ?b ?c))" => "(add (mul ?a ?b) (mul ?a ?c))"),
+    rw!("add-mul"; "(add (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (add ?b ?c))"),
 
-    // rw!("add-mul-same"; "(add ?a (mul ?b ?a))" => "(mul ?a (add 1 ?b))"),
+    rw!("add-mul-same"; "(add ?a (mul ?b ?a))" => "(mul ?a (add 1 ?b))"),
 
-    // rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
-    // rw!("sub-mul-left"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
-    // rw!("sub-mul-right"; "(sub (mul ?a ?b) (mul ?c ?b))" => "(mul (sub ?a ?c) ?b)"),
+    rw!("mul-sub"; "(mul ?a (sub ?b ?c))" => "(sub (mul ?a ?b) (mul ?a ?c))"),
+    rw!("sub-mul-left"; "(sub (mul ?a ?b) (mul ?a ?c))" => "(mul ?a (sub ?b ?c))"),
+    rw!("sub-mul-right"; "(sub (mul ?a ?b) (mul ?c ?b))" => "(mul (sub ?a ?c) ?b)"),
 
-    // rw!("sub-mul-same-right"; "(sub ?a (mul ?b ?a))" => "(mul ?a (sub 1 ?b))"),
-    // rw!("sub-mul-same-left"; "(sub (mul ?a ?b) ?a)" => "(mul ?a (sub ?b 1))"),
+    rw!("sub-mul-same-right"; "(sub ?a (mul ?b ?a))" => "(mul ?a (sub 1 ?b))"),
+    rw!("sub-mul-same-left"; "(sub (mul ?a ?b) ?a)" => "(mul ?a (sub ?b 1))"),
 
-    // rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)" if is_not_zero("?c")),
-    // rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
+    rw!("mul-div"; "(mul ?a (div ?b ?c))" => "(div (mul ?a ?b) ?c)" if is_not_zero("?c")),
+    rw!("div-mul"; "(div (mul ?a ?b) ?c)" => "(mul ?a (div ?b ?c))"),
 
-    // rw!("div-1"; "(div ?a 1.0)" => "?a"),
+    rw!("div-1"; "(div ?a 1.0)" => "?a"),
     
-    // rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
-    // rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
+    rw!("div-add"; "(div (add ?a ?b) ?c)" => "(add (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
+    rw!("add-div"; "(add (div ?a ?b) (div ?c ?b))" => "(div (add ?a ?c) ?b)"),
 
-    // rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
-    // rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
+    rw!("div-sub"; "(div (sub ?a ?b) ?c)" => "(sub (div ?a ?c) (div ?b ?c))" if is_not_zero("?c")),
+    rw!("sub-div"; "(sub (div ?a ?b) (div ?c ?b))" => "(div (sub ?a ?c) ?b)"),
 
-    // rw!("sub-0"; "(sub ?a 0)" => "?a"),
+    rw!("sub-0"; "(sub ?a 0)" => "?a"),
 
-    // rw!("pow-1"; "(pow ?a 1)" => "?a"),
-    // rw!("pow-0"; "(pow ?a 0)" => "1"),
+    rw!("pow-1"; "(pow ?a 1)" => "?a"),
+    rw!("pow-0"; "(pow ?a 0)" => "1"),
 
-    // rw!("pow-add"; "(pow ?a (add ?b ?c))" => "(mul (pow ?a ?b) (pow ?a ?c))"),
-    // rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
+    rw!("pow-add"; "(pow ?a (add ?b ?c))" => "(mul (pow ?a ?b) (pow ?a ?c))"),
+    rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
 
-    // rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
-    // rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
+    rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
+    rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
 
-    // rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
-    // rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
+    rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
+    rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
 
-    // rw!("exp-0"; "(exp 0)" => "1"),
+    rw!("exp-0"; "(exp 0)" => "1"),
 
-    // rw!("log-1"; "(log 1)" => "0"),
+    rw!("log-1"; "(log 1)" => "0"),
 
-    // rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
+    rw!("exp-add"; "(exp (add ?a ?b))" => "(mul (exp ?a) (exp ?b))"),
     rw!("mul-exp"; "(mul (exp ?a) (exp ?b))" => "(exp (add ?a ?b))"),
 
-    // rw!("exp-sub"; "(exp (sub ?a ?b))" => "(div (exp ?a) (exp ?b))"),
-    // rw!("div-exp"; "(div (exp ?a) (exp ?b))" => "(exp (sub ?a ?b))"),
+    rw!("exp-sub"; "(exp (sub ?a ?b))" => "(div (exp ?a) (exp ?b))"),
+    rw!("div-exp"; "(div (exp ?a) (exp ?b))" => "(exp (sub ?a ?b))"),
 
-    // rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
+    rw!("pow-exp"; "(pow (exp ?a) ?b)" => "(exp (mul ?a ?b))"),
 
-    // rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
-    // rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    rw!("log-mul"; "(log (mul ?a ?b))" => "(add (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    rw!("log-div"; "(log (div ?a ?b))" => "(sub (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
 
     rw!("log-exp"; "(log (exp ?a))" => "?a"),
 
-    // rw!("eq-log"; "(eq ?a ?b)" => "(eq (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
-    rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b") if log_le_curv_check("?a", "?b")),
+    rw!("eq-log"; "(eq ?a ?b)" => "(eq (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
+    rw!("le-log"; "(le ?a ?b)" => "(le (log ?a) (log ?b))" if is_gt_zero("?a") if is_gt_zero("?b")),
 
     rw!("map-objFun-log"; "(objFun ?a)" => "(objFun (log ?a))" if is_gt_zero("?a")),
     rw!("map-domain-exp"; 
@@ -842,25 +844,134 @@ struct DCPScore<'a> {
     id : Id,
 }
 
+// 0 -> cvx, 1 -> concave, 2 -> affine, 3 -> constant, 4 -> unknown
+// 0 -> valid
+
 impl<'a> CostFunction<Optimization> for DCPScore<'a> {
     type Cost = usize;
-    fn cost<C>(&mut self, _enode: &Optimization, mut _costs: C) -> Self::Cost
+    fn cost<C>(&mut self, enode: &Optimization, mut costs: C) -> Self::Cost
     where
         C: FnMut(Id) -> Self::Cost
     {
-        // This doesn't work because curvature is not e-class invariant.
-        let curvature = self.egraph[self.id].data.curvature.clone();
-        if curvature == Curvature::Convex {
-            return 0;
+        match enode {
+            Optimization::Prob([a, b]) => {
+                costs(*a) + costs(*b)
+            }
+            Optimization::ObjFun(a) => {
+                costs(*a)
+            }
+            Optimization::Constraints(a) => {
+                costs(*a)
+            }
+            Optimization::And([a, b]) => {
+                costs(*a) + costs(*b)
+            }
+            Optimization::Eq([a, b]) => {
+                costs(*a) + costs(*b)
+            }
+            Optimization::Le([a, b]) => {
+                match (costs(*a), costs(*b)) {
+                    (0, 1) => { 0 }
+                    (0, 2) => { 0 }
+                    (0, 3) => { 0 }
+                    (2, 1) => { 0 }
+                    (3, 1) => { 0 }
+                    (2, 2) => { 0 }
+                    (3, 2) => { 0 }
+                    (2, 3) => { 0 }
+                    (3, 3) => { 0 }
+                    _ => { 4 }
+                }
+            }
+            Optimization::Neg(a) => {
+                match costs(*a) {
+                    0 => { 1 }
+                    1 => { 0 }
+                    2 => { 2 }
+                    3 => { 3 }
+                    _ => { 4 }
+                }
+            }
+            Optimization::Add([a, b]) => {
+                match (costs(*a), costs(*b)) {
+                    (0, 0) => { 0 }
+                    (0, 2) => { 0 }
+                    (0, 3) => { 0 }
+                    (2, 0) => { 0 }
+                    (3, 0) => { 0 }
+                    (1, 1) => { 1 }
+                    (1, 2) => { 1 }
+                    (1, 3) => { 1 }
+                    (2, 1) => { 1 }
+                    (3, 1) => { 1 }
+                    (2, 2) => { 2 }
+                    (2, 3) => { 2 }
+                    (3, 2) => { 2 }
+                    (3, 3) => { 3 }
+                    _ => { 4 }
+                }
+            }
+            Optimization::Sub([a, b]) => {
+                match (costs(*a), costs(*b)) {
+                    (1, 0) => { 1 }
+                    (1, 2) => { 1 }
+                    (1, 3) => { 1 }
+                    (2, 0) => { 1 }
+                    (3, 0) => { 1 }
+                    (0, 1) => { 0 }
+                    (0, 2) => { 0 }
+                    (0, 3) => { 0 }
+                    (2, 1) => { 0 }
+                    (3, 1) => { 0 }
+                    (2, 2) => { 2 }
+                    (2, 3) => { 2 }
+                    (3, 2) => { 2 }
+                    (3, 3) => { 3 }
+                    _ => { 4 }
+                }
+            }
+            Optimization::Mul([a, b]) => {
+                4
+            }
+            Optimization::Div([a, b]) => {
+                4
+            }
+            Optimization::Pow([a, b]) => {
+                4
+            }
+            Optimization::Log(a) => {
+                if costs(*a) == 3 {
+                    3
+                }
+                else {
+                    4
+                }
+            }
+            Optimization::Exp(a) => {
+                if costs(*a) == 3 {
+                    3
+                }
+                else {
+                    4
+                }
+            }
+            Optimization::Var(_a) => {
+                2
+            }
+            Optimization::Symbol(_) => {
+                4
+            }
+            Optimization::Constant(_f) => {
+                3
+            }
         }
-        return 100;
     }
 }
 
 fn simplify(s: &str) -> String {
     let expr: RecExpr<Optimization> = s.parse().unwrap();
 
-    let runner = Runner::default().with_expr(&expr).run(&rules());
+    let runner = Runner::default().with_explanations_enabled().with_expr(&expr).run(&rules());
     
     let root = runner.roots[0];
     
@@ -874,8 +985,6 @@ fn simplify(s: &str) -> String {
     let extractor = Extractor::new(&runner.egraph, cost_func);
     let (best_cost, best) = extractor.find_best(root);
     println!("Simplified {} to {} with cost {}", expr, best, best_cost);
-
-    //print!("{}", runner.egraph);
 
     return best.to_string();
 }
@@ -896,11 +1005,9 @@ fn simple_tests() {
 #[test]
 fn simpler_tests() {
     let r = simplify("
-    (mul (exp (var x)) (exp (var x)))");
+    (le 10 (mul (exp (var x)) (exp (var x))))");
     println!("simplified: {}", r);
 }
-
-
 
 #[test]
 fn hard_test() {
