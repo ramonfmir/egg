@@ -2,7 +2,7 @@ use egg::{rewrite as rw, *};
 use fxhash::FxHashSet as HashSet;
 use instant::Duration;
 use ordered_float::NotNan;
-use std::{fs, fmt};
+use std::{fs, fmt, collections::btree_set};
 use core::cmp::Ordering;
 
 pub type Constant = NotNan<f64>;
@@ -663,11 +663,6 @@ fn get_rewrites(e1 : &str, e2 : &str) {
         for i in 0..flat_explanation.len() {
             let expl = &flat_explanation[i];
             println!("Explanation: {}", expl.get_string());
-            // if let Some(rule) = expl.forward_rule {
-            //     println!("Rule: {} (FWD)", rule);
-            // } else if let Some(rule) = expl.backward_rule {
-            //     println!("Rule: {} (BWD)", rule);
-            // }
         }
     }
 }
@@ -954,7 +949,11 @@ impl<'a> CostFunction<Optimization> for DCPScore<'a> {
 fn simplify(s: &str) -> String {
     let expr: RecExpr<Optimization> = s.parse().unwrap();
 
-    let runner = Runner::default().with_explanations_enabled().with_expr(&expr).run(&rules());
+    let runner = 
+        Runner::default()
+        .with_explanations_enabled()
+        .with_expr(&expr)
+        .run(&rules());
     
     let root = runner.roots[0];
     
@@ -964,10 +963,25 @@ fn simplify(s: &str) -> String {
     let dot_str =  runner.egraph.dot().to_string();
     fs::write("test.dot", dot_str).expect("");
 
-    let cost_func = DCPScore { egraph: &runner.egraph };
-    let extractor = Extractor::new(&runner.egraph, cost_func);
-    let (best_cost, best) = extractor.find_best(root);
-    println!("Simplified {} to {} with cost {}", expr, best, best_cost);
+    let mut best = RecExpr::default();
+    {
+        let cost_func = DCPScore { egraph: &runner.egraph };
+        let extractor = Extractor::new(&runner.egraph, cost_func);
+        let (best_cost, best_found) = extractor.find_best(root);
+        best = best_found;
+        println!("Simplified {} to {} with cost {}", expr, best, best_cost);
+    }
+
+    let mut egraph = runner.egraph;
+    let mut explanation : Explanation<Optimization> = 
+        egraph.explain_equivalence(&expr, &best);
+    let flat_explanation : &FlatExplanation<Optimization> =
+        explanation.make_flat_explanation();
+        
+        for i in 0..flat_explanation.len() {
+            let expl = &flat_explanation[i];
+            println!("Explanation: {}", expl.get_string());
+        }
 
     return best.to_string();
 }
@@ -989,6 +1003,13 @@ fn simple_tests() {
 fn silly_prob() {
     let r = simplify("
     (prob (objFun (var x)) (constraints (le 0 1)))");
+    println!("simplified: {}", r);
+}
+
+#[test]
+fn not_a_gp() {
+    let r = simplify("
+    (prob (objFun (var x)) (constraints (le 0 (var x))))");
     println!("simplified: {}", r);
 }
 
