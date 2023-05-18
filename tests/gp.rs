@@ -95,14 +95,17 @@ pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
     constant: Option<(Constant, PatternAst<Optimization>)>,
     curvature: Curvature,
-    is_log: bool,
+    has_log: bool,
+    has_exp: bool,
 }
 
 impl Analysis<Optimization> for Meta {    
     type Data = Data;
     fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> DidMerge {
-        let before_len = to.free_vars.len();
+        to.has_exp = to.has_exp || from.has_exp;
+        to.has_log = to.has_log || from.has_log;
 
+        let before_len = to.free_vars.len();
         to.free_vars.retain(|i| from.free_vars.contains(i));
         DidMerge(
             before_len != to.free_vars.len(),
@@ -119,7 +122,8 @@ impl Analysis<Optimization> for Meta {
         let mut free_vars = HashSet::default();
         let mut constant: Option<(Constant, PatternAst<Optimization>)> = None;
         let curvature = Curvature::Unknown;
-        let mut is_log = false;
+        let mut has_log = false;
+        let mut has_exp = false;
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -201,10 +205,23 @@ impl Analysis<Optimization> for Meta {
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
-                is_log = true;
+                match get_constant(a) {
+                    Some((c, _)) => { 
+                        constant = Some((NotNan::new(c.ln()).unwrap(), format!("(log {})", c).parse().unwrap())); 
+                    }
+                    _ => {}
+                }
+                has_log = true;
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
+                match get_constant(a) {
+                    Some((c, _)) => { 
+                        constant = Some((NotNan::new(c.exp()).unwrap(), format!("(exp {})", c).parse().unwrap())); 
+                    }
+                    _ => {}
+                }
+                has_exp = true;
             }
             Optimization::Var(a) => {
                 // Assume that after var there is always a symbol.
@@ -221,10 +238,16 @@ impl Analysis<Optimization> for Meta {
             }
         }
 
-        Data { free_vars, constant, curvature, is_log }
+        Data { free_vars, constant, curvature, has_log, has_exp }
     }
 
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
+        // Skip constant fold for log and exp. The values are still calculated
+        // to check for division by zero.
+        if egraph[id].data.has_exp || egraph[id].data.has_log {
+            return;
+        }
+
         // Constant fold.
         let constant = egraph[id].data.constant.clone();
         if let Some((c, pat)) = constant {
