@@ -244,32 +244,32 @@ impl Analysis<Optimization> for Meta {
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
         // Skip constant fold for log and exp. The values are still calculated
         // to check for division by zero.
-        if egraph[id].data.has_exp || egraph[id].data.has_log {
+        if egraph[id].data.has_exp.clone() || egraph[id].data.has_log.clone() {
             return;
         }
 
         // Constant fold.
-        let constant = egraph[id].data.constant.clone();
-        if let Some((c, pat)) = constant {
-            if egraph.are_explanations_enabled() {
-                egraph.union_instantiations(
-                    &pat,
-                    &format!("{}", c).parse().unwrap(),
-                    &Default::default(),
-                    "constant-fold".to_string(),
-                );
-            } 
-            else {
-                let const_id = egraph.add(Optimization::Constant(c));
-                egraph.union(id, const_id);
-            }
+        // let constant = egraph[id].data.constant.clone();
+        // if let Some((c, pat)) = constant {
+        //     if egraph.are_explanations_enabled() {
+        //         egraph.union_instantiations(
+        //             &pat,
+        //             &format!("{}", c).parse().unwrap(),
+        //             &Default::default(),
+        //             "constant-fold".to_string(),
+        //         );
+        //     } 
+        //     else {
+        //         let const_id = egraph.add(Optimization::Constant(c));
+        //         egraph.union(id, const_id);
+        //     }
 
-            // To not prune, comment this out.
-            egraph[id].nodes.retain(|n| n.is_leaf());
+        //     // To not prune, comment this out.
+        //     egraph[id].nodes.retain(|n| n.is_leaf());
 
-            #[cfg(debug_assertions)]
-            egraph[id].assert_unique_leaves();
-        }
+        //     #[cfg(debug_assertions)]
+        //     egraph[id].assert_unique_leaves();
+        // }
     }
 }
 
@@ -414,7 +414,7 @@ pub fn rules() -> Vec<Rewrite<Optimization, Meta>> { vec![
     rw!("mul-pow"; "(mul (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (add ?b ?c))"),
 
     rw!("pow-sub"; "(pow ?a (sub ?b ?c))" => "(div (pow ?a ?b) (pow ?a ?c))" if is_not_zero("?a")),
-    rw!("div-pow"; "(div (pow ?a ?b) (pow ?a ?c))" => "(pow ?a (sub ?b ?c))"),
+    rw!("div-pow"; "(div ?a (pow ?b ?c))" => "(mul ?a (pow ?b (neg ?c)))"),
 
     rw!("div-pow-same-right"; "(div ?a (pow ?a ?b))" => "(pow ?a (sub 1 ?b))"),
     rw!("div-pow-same-left"; "(div (pow ?a ?b) ?a)" => "(pow ?a (sub ?b 1))"),
@@ -1030,7 +1030,20 @@ fn silly_prob() {
 }
 
 #[test]
+fn div_test() {
+    let r = simplify("(prob 
+        (objFun 1.0) 
+        (constraints 
+            (le 5.0 (pow (var y) 0.5)) 
+        )
+    )");
+    println!("simplified: {}", r);
+}
+
+#[test]
 fn not_a_gp() {
+    // NOTE(RFM): This does not work right now because MapExp is always applied
+    // and it destroys (var x).
     let r = simplify("
     (prob (objFun (var x)) (constraints (le 0 (var x))))");
     println!("simplified: {}", r);
