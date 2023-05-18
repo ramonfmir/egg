@@ -33,15 +33,69 @@ define_language! {
     }
 }
 
+fn is_exp(opt: &Optimization) -> bool {
+    match opt {
+        Optimization::Exp(_) => true,
+        _ => false,
+    }
+}
+
 type EGraph = egg::EGraph<Optimization, Meta>;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct Meta;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Curvature {
+    Convex,
+    Concave,
+    Affine,
+    Constant,
+    Valid,
+    Unknown,
+}
+
+impl PartialOrd for Curvature {
+    fn partial_cmp(&self, other:&Curvature) -> Option<Ordering> {
+        if *self == *other {
+            return Some(Ordering::Equal);
+        }
+        if *self == Curvature::Convex {
+            return Some(Ordering::Less);
+        } 
+        if *other == Curvature::Convex {
+            return Some(Ordering::Greater);
+        }
+        if *self == Curvature::Unknown {
+            return Some(Ordering::Greater);
+        }
+        if *other == Curvature::Unknown {
+            return Some(Ordering::Less);
+        }
+        // NOTE(RFM): Egg unwraps this value.
+        return Some(Ordering::Equal);
+    }
+}
+
+impl fmt::Display for Curvature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Curvature::Convex   => write!(f, "Convex"),
+            Curvature::Concave  => write!(f, "Concave"),
+            Curvature::Affine   => write!(f, "Affine"),
+            Curvature::Unknown  => write!(f, "Unknown"),
+            Curvature::Constant => write!(f, "Constant"),
+            Curvature::Valid    => write!(f, "Valid"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Data {
     free_vars: HashSet<(Id, Symbol)>,
     constant: Option<(Constant, PatternAst<Optimization>)>,
+    curvature: Curvature,
+    is_log: bool,
 }
 
 impl Analysis<Optimization> for Meta {    
@@ -64,6 +118,8 @@ impl Analysis<Optimization> for Meta {
         
         let mut free_vars = HashSet::default();
         let mut constant: Option<(Constant, PatternAst<Optimization>)> = None;
+        let curvature = Curvature::Unknown;
+        let mut is_log = false;
 
         match enode {
             Optimization::Prob([a, b]) => {
@@ -145,6 +201,7 @@ impl Analysis<Optimization> for Meta {
             }
             Optimization::Log(a) => {
                 free_vars.extend(get_vars(a));
+                is_log = true;
             }
             Optimization::Exp(a) => {
                 free_vars.extend(get_vars(a));
@@ -164,7 +221,7 @@ impl Analysis<Optimization> for Meta {
             }
         }
 
-        Data { free_vars, constant }
+        Data { free_vars, constant, curvature, is_log }
     }
 
     fn modify(egraph: &mut egg::EGraph<Optimization, Self>, id: Id) {
@@ -225,8 +282,8 @@ impl Applier<Optimization, Meta> for MapExp {
                         "map-exp".to_string(),
                     );
                     if did_union {
+                        egraph[new_id].nodes.retain(|n| is_exp(n));
                         res.push(parent_id);
-                        res.push(new_id);
                     }
                 }
                 else {
@@ -666,45 +723,6 @@ fn get_rewrites_full_gp() {
         )")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Curvature {
-    Convex,
-    Concave,
-    Affine,
-    Constant,
-    Valid,
-    Unknown,
-}
-
-impl PartialOrd for Curvature {
-    fn partial_cmp(&self, other:&Curvature) -> Option<Ordering> {
-        if *self == *other {
-            return Some(Ordering::Equal);
-        }
-        if *self == Curvature::Convex {
-            return Some(Ordering::Less);
-        } 
-        if *other == Curvature::Convex {
-            return Some(Ordering::Greater);
-        }
-        // NOTE(RFM): Egg unwraps this value.
-        return Some(Ordering::Equal);
-    }
-}
-
-impl fmt::Display for Curvature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Curvature::Convex   => write!(f, "Convex"),
-            Curvature::Concave  => write!(f, "Concave"),
-            Curvature::Affine   => write!(f, "Affine"),
-            Curvature::Unknown  => write!(f, "Unknown"),
-            Curvature::Constant => write!(f, "Constant"),
-            Curvature::Valid    => write!(f, "Valid"),
-        }
-    }
-}
-
 #[derive(Debug)]
 struct DCPScore<'a> {
     egraph: &'a EGraph,
@@ -721,14 +739,11 @@ impl<'a> CostFunction<Optimization> for DCPScore<'a> {
         let get_constant = 
             |i: &Id| self.egraph[*i].data.constant.clone();
 
-        
         match enode {
             Optimization::Prob([a, b]) => {
                 if get_curvature(a) == Curvature::Convex && get_curvature(b) == Curvature::Valid {
-                    print!("CONVEX!");
                     return Curvature::Convex;
-                } 
-                println!("Prob: {:?} {:?}", get_curvature(a), get_curvature(b));
+                }
                 return Curvature::Unknown;
             }
             Optimization::ObjFun(a) => {
@@ -776,7 +791,6 @@ impl<'a> CostFunction<Optimization> for DCPScore<'a> {
                 }
             }
             Optimization::Add([a, b]) => {
-                println!("Add: {:?} {:?}", get_curvature(a), get_curvature(b));
                 match (get_curvature(a), get_curvature(b)) {
                     (Curvature::Convex,   Curvature::Convex)   => { return Curvature::Convex; }
                     (Curvature::Convex,   Curvature::Affine)   => { return Curvature::Convex; }
@@ -924,7 +938,6 @@ impl<'a> CostFunction<Optimization> for DCPScore<'a> {
                 return Curvature::Unknown;
             }
             Optimization::Var(_a) => {
-                println!("Var: {}", _a);
                 return Curvature::Affine;
             }
             Optimization::Symbol(_sym) => {
@@ -973,6 +986,13 @@ fn simple_tests() {
 }
 
 #[test]
+fn silly_prob() {
+    let r = simplify("
+    (prob (objFun (var x)) (constraints (le 0 1)))");
+    println!("simplified: {}", r);
+}
+
+#[test]
 fn simpler_tests() {
     let r = simplify("
     (mul (exp (var x)) (exp (var x)))");
@@ -998,3 +1018,4 @@ fn hard_test() {
     )");
     println!("simplified: {}", r);
 }
+// (prob (objFun (sub (var ux) (var uy))) (constraints (and (le (add (exp (sub (mul 2 (var ux)) (mul 0.5 (var uy)))) (mul 3 (exp (add (mul 0.5 (var uy)) (sub 0 (var uz)))))) 1) (and (eq (add (var ux) (var uy)) (var uz)) (and (le (log 2) (var ux)) (le (exp (var ux)) 3))))))
